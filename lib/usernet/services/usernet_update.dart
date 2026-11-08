@@ -121,7 +121,8 @@ class UserNetUpdateService {
                : Platform.isMacOS
                ? 'macos'
                : 'unsupported') {
-    _arch = arch ??
+    _arch =
+        arch ??
         (Platform.isMacOS && Abi.current() == Abi.macosArm64
             ? 'arm64'
             : 'amd64');

@@ -42,28 +42,31 @@ void main() {
     );
   });
 
-  test('uses the mirror when the primary update origin is unreachable', () async {
-    final service = UserNetUpdateService(
-      platform: 'android',
-      client: MockClient((request) async {
-        if (request.url.host == 'updates.userlay.com') {
-          throw const SocketException('unreachable');
-        }
-        return http.Response(
-          '{"version":"0.5.2","build":2026102907,'
-          '"apkUrl":"https://www.userlay.com/usernet-updates/android/usernet.apk",'
-          '"sha256":"$digest"}',
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      }),
-    );
+  test(
+    'uses the mirror when the primary update origin is unreachable',
+    () async {
+      final service = UserNetUpdateService(
+        platform: 'android',
+        client: MockClient((request) async {
+          if (request.url.host == 'updates.userlay.com') {
+            throw const SocketException('unreachable');
+          }
+          return http.Response(
+            '{"version":"0.5.2","build":2026102907,'
+            '"apkUrl":"https://www.userlay.com/usernet-updates/android/usernet.apk",'
+            '"sha256":"$digest"}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
 
-    final release = await service.latest();
+      final release = await service.latest();
 
-    expect(release?.build, 2026102907);
-    expect(release?.downloadUrl.host, 'www.userlay.com');
-  });
+      expect(release?.build, 2026102907);
+      expect(release?.downloadUrl.host, 'www.userlay.com');
+    },
+  );
 
   test('chooses the newest version across both update origins', () async {
     final service = UserNetUpdateService(
@@ -133,38 +136,50 @@ void main() {
 
   test('accepts the architecture-specific macOS disk image', () {
     final alternateDigest = List.filled(64, 'a').join();
-    final armRelease = UserNetRelease.parse({
-      'version': '0.5.12',
-      'build': 2026110805,
-      'dmgArm64Url':
-          'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
-      'dmgAmd64Url':
-          'https://updates.userlay.com/macos/UserNet-macos-amd64.dmg',
-      'sha256Arm64': digest,
-      'sha256Amd64': alternateDigest,
-    }, platform: 'macos', arch: 'arm64');
-    final intelRelease = UserNetRelease.parse({
-      'version': '0.5.12',
-      'build': 2026110805,
-      'dmgArm64Url':
-          'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
-      'dmgAmd64Url':
-          'https://updates.userlay.com/macos/UserNet-macos-amd64.dmg',
-      'sha256Arm64': digest,
-      'sha256Amd64': alternateDigest,
-    }, platform: 'macos', arch: 'amd64');
+    final armRelease = UserNetRelease.parse(
+      {
+        'version': '0.5.12',
+        'build': 2026110805,
+        'dmgArm64Url':
+            'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
+        'dmgAmd64Url':
+            'https://updates.userlay.com/macos/UserNet-macos-amd64.dmg',
+        'sha256Arm64': digest,
+        'sha256Amd64': alternateDigest,
+      },
+      platform: 'macos',
+      arch: 'arm64',
+    );
+    final intelRelease = UserNetRelease.parse(
+      {
+        'version': '0.5.12',
+        'build': 2026110805,
+        'dmgArm64Url':
+            'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
+        'dmgAmd64Url':
+            'https://updates.userlay.com/macos/UserNet-macos-amd64.dmg',
+        'sha256Arm64': digest,
+        'sha256Amd64': alternateDigest,
+      },
+      platform: 'macos',
+      arch: 'amd64',
+    );
 
     expect(armRelease?.downloadUrl.path, '/macos/UserNet-macos-arm64.dmg');
     expect(intelRelease?.downloadUrl.path, '/macos/UserNet-macos-amd64.dmg');
     expect(armRelease?.sha256, digest);
     expect(intelRelease?.sha256, alternateDigest);
     expect(
-      UserNetRelease.parse({
-        'version': '0.5.12',
-        'build': 2026110805,
-        'dmgArm64Url': 'https://updates.userlay.com/windows/UserNet.dmg',
-        'sha256Arm64': digest,
-      }, platform: 'macos', arch: 'arm64'),
+      UserNetRelease.parse(
+        {
+          'version': '0.5.12',
+          'build': 2026110805,
+          'dmgArm64Url': 'https://updates.userlay.com/windows/UserNet.dmg',
+          'sha256Arm64': digest,
+        },
+        platform: 'macos',
+        arch: 'arm64',
+      ),
       isNull,
     );
   });
