@@ -36,7 +36,10 @@ void main() {
 
     expect(
       container.read(
-        genColorSchemeProvider(Brightness.light, pureBlack: false),
+        genColorSchemeProvider(
+          Brightness.light,
+          pureBlack: false,
+        ),
       ),
       seededColorScheme(
         seedColor: lightSeed,
@@ -46,7 +49,10 @@ void main() {
     );
     expect(
       container.read(
-        genColorSchemeProvider(Brightness.dark, pureBlack: false),
+        genColorSchemeProvider(
+          Brightness.dark,
+          pureBlack: false,
+        ),
       ),
       seededColorScheme(
         seedColor: darkSeed,
