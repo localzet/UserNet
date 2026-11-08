@@ -416,8 +416,7 @@ Future<void> _packageMacos(_Build build) async {
   final staging = Directory(p.join(build.rootDir, 'build', 'dmg'));
   if (staging.existsSync()) staging.deleteSync(recursive: true);
   staging.createSync(recursive: true);
-  // Without a signing identity create-dmg still writes the image, then exits
-  // non-zero over the signature it could not add; the release job signs later.
+  // Without a signing identity create-dmg still writes an unsigned image.
   final code = await build.run('create-dmg', [
     '--overwrite',
     '--dmg-title',

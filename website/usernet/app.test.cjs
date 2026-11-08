@@ -7,7 +7,7 @@ const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
 
 async function render(manifests) {
-  const links = Object.fromEntries(['android', 'windows', 'linux', 'macos'].map(name => [name, {
+  const links = Object.fromEntries(['android', 'windows', 'linux', 'macos-arm64', 'macos-amd64'].map(name => [name, {
     textContent: '', classList: { remove() {} }, removeAttribute() {},
   }]));
   const document = { getElementById: name => links[name] };
@@ -63,14 +63,16 @@ test('exposes the Linux DEB only when a valid release exists', async () => {
   assert.equal(links.android.textContent, 'Пока недоступно');
 });
 
-test('exposes a macOS disk image only when a valid release exists', async () => {
+test('exposes architecture-specific macOS disk images only when valid', async () => {
   const links = await render({ macos: {
     version: '0.5.12',
     build: 2026110805,
-    dmgUrl: 'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
+    dmgArm64Url: 'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
+    dmgAmd64Url: 'https://updates.userlay.com/macos/UserNet-macos-amd64.dmg',
   } });
-  assert.equal(links.macos.href, 'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg');
-  assert.equal(links.macos.textContent, 'Скачать 0.5.12');
+  assert.equal(links['macos-arm64'].href, 'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg');
+  assert.equal(links['macos-amd64'].href, 'https://updates.userlay.com/macos/UserNet-macos-amd64.dmg');
+  assert.equal(links['macos-arm64'].textContent, 'Скачать Apple Silicon · 0.5.12');
   assert.equal(links.android.textContent, 'Пока недоступно');
 });
 
@@ -78,10 +80,11 @@ test('rejects macOS downloads outside the trusted update origin', async () => {
   const links = await render({ macos: {
     version: '0.5.12',
     build: 2026110805,
-    dmgUrl: 'https://evil.example/UserNet-macos-arm64.dmg',
+    dmgArm64Url: 'https://evil.example/UserNet-macos-arm64.dmg',
+    dmgAmd64Url: 'https://evil.example/UserNet-macos-amd64.dmg',
   } });
-  assert.equal(links.macos.href, undefined);
-  assert.equal(links.macos.textContent, 'Пока недоступно');
+  assert.equal(links['macos-arm64'].href, undefined);
+  assert.equal(links['macos-arm64'].textContent, 'Пока недоступно');
 });
 
 test('never offers source archives or links outside the release path', async () => {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ffi' show Abi;
 
 import 'package:crypto/crypto.dart';
 import 'package:fl_clash/usernet/services/usernet_admin.dart';
@@ -39,6 +40,7 @@ class UserNetRelease {
   static UserNetRelease? parse(
     Map<String, dynamic> json, {
     String platform = 'android',
+    String? arch,
   }) {
     final version = json['version']?.toString();
     final build = json['build'];
@@ -46,7 +48,11 @@ class UserNetRelease {
     final (urlField, artifactPath, artifactExtension) = switch (platform) {
       'windows' => ('installerUrl', '/windows/', '.exe'),
       'linux' => ('debUrl', '/linux/', '.deb'),
-      'macos' => ('dmgUrl', '/macos/', '.dmg'),
+      'macos' => (
+        arch == 'arm64' ? 'dmgArm64Url' : 'dmgAmd64Url',
+        '/macos/',
+        '.dmg',
+      ),
       _ => ('apkUrl', '/android/', '.apk'),
     };
     final artifactUrl = Uri.tryParse(json[urlField]?.toString() ?? '');
@@ -98,6 +104,7 @@ class UserNetUpdateService {
     http.Client? client,
     Future<Directory> Function()? supportDirectory,
     String? platform,
+    String? arch,
   }) : _client = client ?? http.Client(),
        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
        _platform =
@@ -111,6 +118,10 @@ class UserNetUpdateService {
                : Platform.isMacOS
                ? 'macos'
                : 'unsupported') {
+    _arch = arch ??
+        (Platform.isMacOS && Abi.current() == Abi.macosArm64
+            ? 'arm64'
+            : 'amd64');
     const configuredUrl = String.fromEnvironment(
       'USERNET_RELEASE_MANIFEST_URL',
     );
@@ -130,6 +141,7 @@ class UserNetUpdateService {
   final http.Client _client;
   final Future<Directory> Function() _supportDirectory;
   final String _platform;
+  late final String _arch;
   late final List<Uri> _manifestUrls;
 
   Future<UserNetRelease?> latest() async {
@@ -155,6 +167,7 @@ class UserNetUpdateService {
         final release = UserNetRelease.parse(
           Map<String, dynamic>.from(decoded),
           platform: _platform,
+          arch: _arch,
         );
         if (release == null) {
           throw const FormatException('Invalid release metadata');
