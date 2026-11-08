@@ -17,12 +17,6 @@
 
 UserNet is a cross-platform VPN and proxy client built on Mihomo. It combines an Aura Network subscription, server selection and connection diagnostics. Compatible profiles from other providers can also be added separately.
 
-<p align="center">
-  <img src="snapshots/usernet-android-about-0.5.12.png" width="360" alt="UserNet 0.5.12 About screen on Android">
-</p>
-
-This is a real screenshot of UserNet 0.5.12 on Android. A connection demo video is not published yet: it needs a dedicated test subscription so no customer data or production nodes are exposed.
-
 ### Platforms
 
 Android, Windows, macOS and Linux. Current downloads, system requirements and installation instructions are listed on the [download page](https://www.userlay.com/usernet/).

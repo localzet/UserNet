@@ -31,6 +31,9 @@ void main() {
           darkSeed: darkSeed,
           accentColor: const Color(defaultPrimaryColor),
         );
+    container
+        .read(themeSettingProvider.notifier)
+        .update((state) => state.copyWith(pureBlack: false));
 
     final style = container.read(themeSettingProvider).colorStyle;
 

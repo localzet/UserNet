@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:test/test.dart';
@@ -391,7 +392,7 @@ proxy-server-nameserver-policy:
       expect(options.definition, {
         'health-check': {
           'enable': true,
-          'url': 'https://ya.ru',
+          'url': defaultTestUrl,
           'timeout': 3000,
           'lazy': false,
         },
@@ -411,7 +412,7 @@ proxy-server-nameserver-policy:
       expect(options.copyWith.healthCheck(timeout: 3000).definition, {
         'health-check': {
           'enable': true,
-          'url': 'https://ya.ru',
+          'url': defaultTestUrl,
           'timeout': 3000,
         },
       });
