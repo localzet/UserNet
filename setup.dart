@@ -79,7 +79,6 @@ Future<void> main(List<String> args) async {
   }
   final arch = results['arch'] as String? ?? _detectArch();
   final targets = createPackageTargets(platform, results['targets']);
-  final wanted = targets.split(',').map((target) => target.trim()).toSet();
   final androidArch = platform == 'android' ? results['arch'] as String? : null;
   final verbose = results['verbose'] as bool;
 
