@@ -37,7 +37,7 @@ Android, Windows, macOS и Linux. Актуальные файлы, систем�
 
 ## Сборка из исходников
 
-Для воспроизводимой сборки используйте Flutter 3.47.6 (с входящим в него Dart), Go 1.27.1, Rust stable и инструменты целевой платформы. Для Android нужны Android SDK и NDK; для macOS — Xcode; Linux и Windows требуют системные пакеты и SDK соответствующей ОС.
+Для воспроизводимой сборки используйте Flutter 3.47.6 (с входящим в него Dart), Go 1.27.3, Rust stable и инструменты целевой платформы. Для Android нужны Android SDK и NDK; для macOS — Xcode; Linux и Windows требуют системные пакеты и SDK соответствующей ОС.
 
 ```bash
 git clone https://github.com/localzet/UserNet.git

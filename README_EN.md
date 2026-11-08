@@ -37,7 +37,7 @@ Download only from the [UserNet website](https://www.userlay.com/usernet/) or th
 
 ## Build from source
 
-For a reproducible build, use Flutter 3.47.6 (with its bundled Dart), Go 1.27.1, Rust stable and target-platform tools. Android needs the Android SDK and NDK; macOS needs Xcode; Linux and Windows need their platform SDKs and system packages.
+For a reproducible build, use Flutter 3.47.6 (with its bundled Dart), Go 1.27.3, Rust stable and target-platform tools. Android needs the Android SDK and NDK; macOS needs Xcode; Linux and Windows need their platform SDKs and system packages.
 
 ```bash
 git clone https://github.com/localzet/UserNet.git
