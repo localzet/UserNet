@@ -31,6 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
@@ -52,7 +53,10 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: dart format --output=none --set-exit-if-changed lib test tool plugins setup.dart
+      - name: Check formatting of changed Dart files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: bash tool/check_dart_format.sh "$BASE_SHA"
       - run: flutter analyze --no-fatal-infos
       - run: bash tool/check_plugins.sh
       - run: flutter test
