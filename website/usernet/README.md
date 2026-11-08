@@ -15,6 +15,7 @@ These static files are intended for an origin serving the release manifests at
 leaves that platform unavailable. Run `node --test website/usernet/app.test.cjs`
 from the repository root to check the link validation.
 
-macOS releases use separate `dmgArm64Url` and `dmgAmd64Url` fields. They are
-unsigned and require users to approve the app in macOS Privacy & Security on
-first launch; do not describe them as notarized or silently auto-installable.
+macOS releases use separate `dmgArm64Url` / `dmgAmd64Url` and
+`sha256Arm64` / `sha256Amd64` fields. They are unsigned and require users to
+approve the app in macOS Privacy & Security on first launch; do not describe
+them as notarized or silently auto-installable.

@@ -55,8 +55,11 @@ class UserNetRelease {
       ),
       _ => ('apkUrl', '/android/', '.apk'),
     };
+    final checksumField = platform == 'macos'
+        ? (arch == 'arm64' ? 'sha256Arm64' : 'sha256Amd64')
+        : 'sha256';
     final artifactUrl = Uri.tryParse(json[urlField]?.toString() ?? '');
-    final sha256 = json['sha256']?.toString().toLowerCase();
+    final sha256 = json[checksumField]?.toString().toLowerCase();
     final isPrimaryHost =
         artifactUrl?.host == 'updates.userlay.com' &&
         artifactUrl!.path.startsWith(artifactPath);

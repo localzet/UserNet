@@ -132,6 +132,7 @@ void main() {
   });
 
   test('accepts the architecture-specific macOS disk image', () {
+    final alternateDigest = List.filled(64, 'a').join();
     final armRelease = UserNetRelease.parse({
       'version': '0.5.12',
       'build': 2026110805,
@@ -139,7 +140,8 @@ void main() {
           'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
       'dmgAmd64Url':
           'https://updates.userlay.com/macos/UserNet-macos-amd64.dmg',
-      'sha256': digest,
+      'sha256Arm64': digest,
+      'sha256Amd64': alternateDigest,
     }, platform: 'macos', arch: 'arm64');
     final intelRelease = UserNetRelease.parse({
       'version': '0.5.12',
@@ -148,17 +150,20 @@ void main() {
           'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
       'dmgAmd64Url':
           'https://updates.userlay.com/macos/UserNet-macos-amd64.dmg',
-      'sha256': digest,
+      'sha256Arm64': digest,
+      'sha256Amd64': alternateDigest,
     }, platform: 'macos', arch: 'amd64');
 
     expect(armRelease?.downloadUrl.path, '/macos/UserNet-macos-arm64.dmg');
     expect(intelRelease?.downloadUrl.path, '/macos/UserNet-macos-amd64.dmg');
+    expect(armRelease?.sha256, digest);
+    expect(intelRelease?.sha256, alternateDigest);
     expect(
       UserNetRelease.parse({
         'version': '0.5.12',
         'build': 2026110805,
         'dmgArm64Url': 'https://updates.userlay.com/windows/UserNet.dmg',
-        'sha256': digest,
+        'sha256Arm64': digest,
       }, platform: 'macos', arch: 'arm64'),
       isNull,
     );
