@@ -46,6 +46,7 @@ class UserNetRelease {
     final (urlField, artifactPath, artifactExtension) = switch (platform) {
       'windows' => ('installerUrl', '/windows/', '.exe'),
       'linux' => ('debUrl', '/linux/', '.deb'),
+      'macos' => ('dmgUrl', '/macos/', '.dmg'),
       _ => ('apkUrl', '/android/', '.apk'),
     };
     final artifactUrl = Uri.tryParse(json[urlField]?.toString() ?? '');
@@ -107,6 +108,8 @@ class UserNetUpdateService {
                ? 'android'
                : Platform.isLinux
                ? 'linux'
+               : Platform.isMacOS
+               ? 'macos'
                : 'unsupported') {
     const configuredUrl = String.fromEnvironment(
       'USERNET_RELEASE_MANIFEST_URL',

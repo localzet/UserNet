@@ -131,6 +131,26 @@ void main() {
     );
   });
 
+  test('accepts a macOS disk image only from the macOS release path', () {
+    final release = UserNetRelease.parse({
+      'version': '0.5.12',
+      'build': 2026110805,
+      'dmgUrl': 'https://updates.userlay.com/macos/UserNet-macos-arm64.dmg',
+      'sha256': digest,
+    }, platform: 'macos');
+
+    expect(release?.downloadUrl.path, '/macos/UserNet-macos-arm64.dmg');
+    expect(
+      UserNetRelease.parse({
+        'version': '0.5.12',
+        'build': 2026110805,
+        'dmgUrl': 'https://updates.userlay.com/windows/UserNet.dmg',
+        'sha256': digest,
+      }, platform: 'macos'),
+      isNull,
+    );
+  });
+
   test('compares Linux release versions without a package build suffix', () {
     expect(
       compareUserNetVersions('0.5.11', '0.5.10.2026110802'),

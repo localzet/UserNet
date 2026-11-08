@@ -3,6 +3,7 @@ for (const [platform, field, extension] of [
   ['android', 'apkUrl', '.apk'],
   ['windows', 'installerUrl', '.exe'],
   ['linux', 'debUrl', '.deb'],
+  ['macos', 'dmgUrl', '.dmg'],
 ]) {
   const link = document.getElementById(platform);
   fetch(`/usernet-updates/${platform}/stable.json`, { cache: 'no-store' })
