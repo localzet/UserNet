@@ -31,16 +31,14 @@ void main() {
           darkSeed: darkSeed,
           accentColor: const Color(defaultPrimaryColor),
         );
+    container
+        .read(themeSettingProvider.notifier)
+        .update((state) => state.copyWith(pureBlack: false));
 
     final style = container.read(themeSettingProvider).colorStyle;
 
     expect(
-      container.read(
-        genColorSchemeProvider(
-          Brightness.light,
-          pureBlack: false,
-        ),
-      ),
+      container.read(genColorSchemeProvider(Brightness.light)),
       seededColorScheme(
         seedColor: lightSeed,
         brightness: Brightness.light,
@@ -48,12 +46,7 @@ void main() {
       ),
     );
     expect(
-      container.read(
-        genColorSchemeProvider(
-          Brightness.dark,
-          pureBlack: false,
-        ),
-      ),
+      container.read(genColorSchemeProvider(Brightness.dark)),
       seededColorScheme(
         seedColor: darkSeed,
         brightness: Brightness.dark,
