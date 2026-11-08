@@ -1,0 +1,7 @@
+{
+  "version": "0.5.12",
+  "build": 2026110805,
+  "notes": "Отображается ход загрузки Android-обновления. Проверка узлов по умолчанию использует Gstatic, добавлен блок состояния сервисов на стандартную главную и выбран чисто чёрный режим.",
+  "apkUrl": "https://www.userlay.com/usernet-updates/android/usernet-stable-0.5.12-2026110805.apk",
+  "sha256": "8241c428090fca4fcf59a0feef29ec315cd61fe2c4d69c3f87701ba75ed923dd"
+}

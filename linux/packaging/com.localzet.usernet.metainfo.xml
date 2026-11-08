@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.localzet.usernet</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <pkgname>usernet</pkgname>
+  <name>UserNet</name>
+  <name xml:lang="ru">UserNet</name>
+  <summary>VPN client for Aura Network subscriptions and compatible Mihomo profiles</summary>
+  <summary xml:lang="ru">VPN-клиент Aura Network с управлением подписками и профилями Mihomo</summary>
+  <description>
+    <p>UserNet is the official desktop client for Aura Network. Add your Aura Network subscription to sign in, view account details, connect to the VPN and select an available server.</p>
+    <p>You can also add and manage compatible Mihomo profiles from other providers. Those profiles remain separate from your Aura Network account.</p>
+    <p xml:lang="ru">UserNet — официальное настольное приложение Aura Network. Добавьте свою ссылку подписки, чтобы войти в аккаунт, посмотреть его состояние, подключить VPN и выбрать доступный сервер.</p>
+    <p xml:lang="ru">Также можно добавить совместимый профиль Mihomo другого провайдера. Такие профили не связываются с аккаунтом Aura Network.</p>
+  </description>
+  <launchable type="desktop-id">com.localzet.usernet.desktop</launchable>
+  <!-- Keep the legacy field for older Ubuntu Software versions. -->
+  <developer_name>UserLay</developer_name>
+  <developer id="com.localzet">
+    <name>UserLay</name>
+  </developer>
+  <url type="homepage">https://www.userlay.com/usernet/</url>
+  <url type="bugtracker">https://www.userlay.com/usernet/</url>
+  <url type="help">https://www.userlay.com/usernet/</url>
+  <icon type="stock">com.localzet.usernet</icon>
+  <categories>
+    <category>Network</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.5.12" date="2026-11-08">
+      <description>
+        <p>Clearer store information, visible Android update download progress, improved default connection checks, and a service-status card on the default dashboard.</p>
+        <p xml:lang="ru">Понятное описание в магазине приложений, отображение хода загрузки Android-обновления, улучшенные проверки соединения и блок состояния сервисов на главной.</p>
+      </description>
+    </release>
+  </releases>
+</component>

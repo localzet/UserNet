@@ -1,0 +1,44 @@
+display_name: UserNet
+package_name: usernet
+maintainer:
+  name: Ivan Zorin
+  email: creator@localzet.com
+
+priority: optional
+section: x11
+essential: false
+icon: ./assets/images/usernet_icon.svg
+desktop_icon: com.localzet.usernet
+comment: Official Aura Network VPN client; also supports compatible Mihomo profiles
+comment_ru: Официальный VPN-клиент Aura Network с поддержкой совместимых профилей Mihomo
+
+dependencies:
+  - libayatana-appindicator3-1
+  - libsecret-1-0
+
+# The Helper unit is written on demand by the app, not at install time, so only
+# its teardown belongs here; the binary is already gone when postrm runs.
+postuninstall_scripts:
+  - 'case "${1:-}" in remove|purge) ;; *) exit 0 ;; esac'
+  - 'systemctl disable --now usernet-helper.service >/dev/null 2>&1 || true'
+  - 'rm -f /etc/systemd/system/usernet-helper.service'
+  - 'systemctl daemon-reload >/dev/null 2>&1 || true'
+
+supported_mime_type:
+  - x-scheme-handler/usernet
+
+keywords:
+  - UserNet
+  - Clash
+  - Mihomo
+  - Proxy
+
+generic_name: VPN client
+generic_name_ru: VPN-клиент
+
+categories:
+  - Network
+
+startup_notify: true
+
+startup_wm_class: com.localzet.usernet

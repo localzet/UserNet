@@ -1,0 +1,496 @@
+import 'dart:async';
+
+import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/plugins/app.dart';
+import 'package:fl_clash/state.dart';
+import 'package:fl_clash/usernet/services/usernet_admin.dart';
+import 'package:fl_clash/usernet/services/usernet_update.dart';
+import 'package:fl_clash/usernet/widgets/usernet_download_progress.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/ui.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
+@immutable
+class Person {
+  const Person({this.avatar, required this.name, this.link});
+
+  final String? avatar;
+  final String name;
+  final String? link;
+}
+
+const _forkAuthors = [
+  Person(
+    avatar: 'assets/images/localzet_avatar.png',
+    name: 'localzet',
+    link: 'https://github.com/localzet',
+  ),
+];
+
+const _contributors = [
+  Person(
+    avatar: 'assets/images/avatar/pluralplay.jpg',
+    name: 'pluralplay',
+    link: 'https://github.com/pluralplay',
+  ),
+  Person(
+    avatar: 'assets/images/avatar/kastov.jpg',
+    name: 'kastov',
+    link: 'https://github.com/kastov',
+  ),
+  Person(
+    avatar: 'assets/images/avatar/katsukibtw.jpg',
+    name: 'katsukibtw',
+    link: 'https://github.com/katsukibtw',
+  ),
+];
+
+/// The running core's version when it answers, else the one this build was
+/// made with, else nothing.
+final coreVersionProvider = FutureProvider.autoDispose<String?>((ref) async {
+  String live = '';
+  if (ref.watch(coreStatusProvider) == CoreStatus.connected) {
+    try {
+      live = await ref.read(coreHandlerProvider).getCoreVersion();
+    } catch (_) {}
+  }
+  final version = live.isNotEmpty ? live : coreVersionDefine;
+  return version.isEmpty ? null : version;
+});
+
+class AboutView extends ConsumerWidget {
+  const AboutView({super.key});
+
+  Future<void> _checkUpdate(BuildContext context, WidgetRef ref) async {
+    if (ref.read(loadingProvider(LoadingTag.checkUpdate))) return;
+    if ((system.isAndroid || system.isWindows || system.isLinux) &&
+        !userNetAdminBuild) {
+      await _checkUserNetUpdate(context, ref);
+      return;
+    }
+    context.showNotifier('Обновления для этой платформы пока недоступны.');
+  }
+
+  Future<void> _checkUserNetUpdate(BuildContext context, WidgetRef ref) async {
+    final loading = ref.read(loadingProvider(LoadingTag.checkUpdate).notifier);
+    loading.start();
+    UserNetRelease? release;
+    try {
+      release = await userNetUpdateService.availableUpdate();
+    } catch (_) {
+      if (context.mounted) {
+        context.showNotifier('Не удалось проверить обновление UserNet.');
+      }
+      return;
+    } finally {
+      await loading.stop();
+    }
+    if (!context.mounted) return;
+    if (release == null) {
+      context.showNotifier('Установлена последняя версия UserNet.');
+      return;
+    }
+    final availableRelease = release;
+    final shouldInstall = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Доступно обновление ${availableRelease.version}'),
+        content: Text(
+          availableRelease.notes.isEmpty
+              ? (system.isWindows || system.isLinux)
+                    ? 'Открыть страницу загрузки установщика?'
+                    : 'Скачать и проверить APK?'
+              : availableRelease.notes,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Позже'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Скачать'),
+          ),
+        ],
+      ),
+    );
+    if (shouldInstall != true || !context.mounted) return;
+    if (system.isWindows || system.isLinux) {
+      if (!await launchUrl(
+            release.downloadUrl,
+            mode: LaunchMode.externalApplication,
+          ) &&
+          context.mounted) {
+        context.showNotifier('Не удалось открыть загрузку обновления.');
+      }
+      return;
+    }
+    final progress = ValueNotifier(const UserNetDownloadProgress());
+    final downloadDialog = showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Загрузка обновления UserNet'),
+        content: UserNetDownloadProgressView(progress: progress),
+        actions: [
+          TextButton(
+            onPressed: null,
+            child: const Text('Не закрывайте приложение'),
+          ),
+        ],
+      ),
+    );
+    try {
+      final apk = await userNetUpdateService.download(
+        release,
+        onProgress: (received, total) {
+          progress.value = UserNetDownloadProgress(
+            received: received,
+            total: total,
+          );
+        },
+      );
+      if (!context.mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      await downloadDialog;
+      final result = await app?.installApk(apk.path);
+      if (!context.mounted) return;
+      final message = switch (result) {
+        'permission_required' =>
+          'Разрешите установку UserNet в настройках Android.',
+        'started' => 'APK проверен и передан установщику Android.',
+        _ => 'APK загружен, но установщик не запустился.',
+      };
+      context.showNotifier(message);
+    } catch (_) {
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      await downloadDialog;
+      if (context.mounted) {
+        context.showNotifier('Не удалось скачать или проверить APK.');
+      }
+    } finally {
+      progress.dispose();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final appLocalizations = context.appLocalizations;
+    final isLoading = ref.watch(loadingProvider(LoadingTag.checkUpdate));
+    return CommonScaffold(
+      isLoading: isLoading,
+      title: appLocalizations.about,
+      body: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+          top: context.contentTopPadding,
+          bottom: 32 + context.bottomInset,
+        ),
+        children: [
+          _AboutHero(
+            isCheckingUpdate: isLoading,
+            onCheckUpdate: () {
+              _checkUpdate(context, ref);
+            },
+            onEnterDeveloperMode: () {
+              ref
+                  .read(appSettingProvider.notifier)
+                  .update((state) => state.copyWith(developerMode: true));
+              context.showNotifier(
+                appLocalizations.developerModeEnableTip,
+                level: MessageLevel.success,
+              );
+            },
+            onEasterEgg: () => _showEasterEgg(context),
+          ),
+          const SizedBox(height: 8),
+          generateSection(
+            title: appLocalizations.forkAuthor,
+            items: const [_PeopleRow(people: _forkAuthors)],
+          ),
+          generateSection(
+            title: appLocalizations.otherContributors,
+            items: const [_PeopleRow(people: _contributors)],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEasterEgg(BuildContext context) {
+    dialogs
+        .showMessage(
+          context: context,
+          title: 'REMNAFAMILY ONE LOVE',
+          message: const TextSpan(text: '❤️  TRY REMNAWAVE  ❤️'),
+          confirmText: 'docs.rw',
+          cancelable: true,
+        )
+        .then((open) {
+          if (open == true) {
+            dialogs.openUrl('https://docs.rw');
+          }
+        });
+  }
+}
+
+class _AboutHero extends ConsumerWidget {
+  final bool isCheckingUpdate;
+  final VoidCallback onCheckUpdate;
+  final VoidCallback onEnterDeveloperMode;
+  final VoidCallback onEasterEgg;
+
+  const _AboutHero({
+    required this.isCheckingUpdate,
+    required this.onCheckUpdate,
+    required this.onEnterDeveloperMode,
+    required this.onEasterEgg,
+  });
+
+  static const _logoSize = 96.0;
+  static const _logoInset = 14.0;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colorScheme = context.colorScheme;
+    final appLocalizations = context.appLocalizations;
+    final coreVersion = ref.watch(coreVersionProvider).value;
+    final raised = context.raisedSurfaceLevel.colorOf(colorScheme);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      child: Column(
+        children: [
+          _TapCounter(
+            onEnterDeveloperMode: onEnterDeveloperMode,
+            onEasterEgg: onEasterEgg,
+            child: DecoratedBox(
+              decoration: ShapeDecoration(
+                color: raised,
+                shape: AppShape.all(AppCorner.fit(_logoSize)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(_logoInset),
+                child: SvgPicture.asset(
+                  'assets/images/usernet_logo.svg',
+                  width: _logoSize - _logoInset * 2,
+                  height: _logoSize - _logoInset * 2,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            appName,
+            style: AppTextStyle.title2.of(context, emphasized: true),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              _Pill(
+                label: 'v${globalState.packageInfo.displayVersion}',
+                color: colorScheme.primary,
+                foregroundColor: colorScheme.onPrimary,
+              ),
+              if (coreVersion != null)
+                _Pill(
+                  label: 'core: $coreVersion',
+                  color: colorScheme.secondaryContainer,
+                  foregroundColor: colorScheme.onSecondaryContainer,
+                ),
+              _Pill(
+                label: 'GPL-3.0',
+                color: raised,
+                foregroundColor: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Text(
+              appLocalizations.desc,
+              textAlign: TextAlign.center,
+              style: AppTextStyle.subheadline
+                  .of(context)
+                  .copyWith(color: colorScheme.onSurfaceVariant, height: 1.5),
+            ),
+          ),
+          const SizedBox(height: 20),
+          TonalButton(
+            size: TonalButtonSize.bar,
+            glyph: AppGlyphs.sync,
+            label: appLocalizations.checkUpdate,
+            onPressed: isCheckingUpdate ? null : onCheckUpdate,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  final String label;
+  final Color color;
+  final Color foregroundColor;
+
+  const _Pill({
+    required this.label,
+    required this.color,
+    required this.foregroundColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: ShapeDecoration(color: color, shape: AppShape.full),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Text(
+          label,
+          style: AppTextStyle.caption1
+              .of(context, emphasized: true)
+              .copyWith(color: foregroundColor),
+        ),
+      ),
+    );
+  }
+}
+
+/// A row of avatars with names under them; a person with a link opens it.
+class _PeopleRow extends StatelessWidget {
+  const _PeopleRow({required this.people});
+
+  static const _avatarSize = 56.0;
+
+  final List<Person> people;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListItem(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      title: Wrap(
+        spacing: 16,
+        runSpacing: 12,
+        children: [
+          for (final person in people)
+            _Avatar(person: person, size: _avatarSize),
+        ],
+      ),
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.person, required this.size});
+
+  final Person person;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final link = person.link;
+    final column = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CircleAvatar(
+          radius: size / 2,
+          foregroundImage: person.avatar == null
+              ? null
+              : person.avatar!.startsWith('https://')
+              ? NetworkImage(person.avatar!)
+              : AssetImage(person.avatar!) as ImageProvider,
+          onForegroundImageError: person.avatar == null ? null : (_, _) {},
+          child: Text(person.name.substring(0, 1).toUpperCase()),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          person.name,
+          style: AppTextStyle.caption1.of(context, emphasized: link != null),
+        ),
+      ],
+    );
+    if (link == null) {
+      return column;
+    }
+    return Tooltip(
+      message: link,
+      child: FocusRing(
+        shape: AppShape.md,
+        standsOff: true,
+        child: InkWell(
+          mouseCursor: clickableCursor,
+          customBorder: AppShape.md,
+          onTap: () => dialogs.openUrl(link),
+          child: Padding(padding: const EdgeInsets.all(4), child: column),
+        ),
+      ),
+    );
+  }
+}
+
+/// Five taps on the logo open developer mode; ten in a row find the egg.
+class _TapCounter extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onEnterDeveloperMode;
+  final VoidCallback onEasterEgg;
+
+  const _TapCounter({
+    required this.child,
+    required this.onEnterDeveloperMode,
+    required this.onEasterEgg,
+  });
+
+  @override
+  State<_TapCounter> createState() => _TapCounterState();
+}
+
+class _TapCounterState extends State<_TapCounter> {
+  static const _developerTaps = 5;
+  static const _easterEggTaps = 10;
+
+  int _counter = 0;
+  Timer? _timer;
+
+  void _handleTap() {
+    _counter++;
+    _timer?.cancel();
+    if (_counter == _developerTaps) {
+      widget.onEnterDeveloperMode();
+    }
+    if (_counter >= _easterEggTaps) {
+      widget.onEasterEgg();
+      _resetCounter();
+      return;
+    }
+    _timer = Timer(const Duration(seconds: 1), _resetCounter);
+  }
+
+  void _resetCounter() {
+    _counter = 0;
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(onTap: _handleTap, child: widget.child),
+    );
+  }
+}

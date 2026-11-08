@@ -1,0 +1,51 @@
+display_name: UserNet
+
+packager: Ivan Zorin
+packagerEmail: creator@localzet.com
+license: GPL-3.0-or-later
+
+priority: optional
+section: x11
+essential: false
+icon: ./assets/images/usernet_icon.svg
+desktop_icon: com.localzet.usernet
+comment: Official Aura Network VPN client; also supports compatible Mihomo profiles
+comment_ru: Официальный VPN-клиент Aura Network с поддержкой совместимых профилей Mihomo
+
+requires:
+  - libsecret
+
+# rpmbuild's find-debuginfo and brp-strip rewrite the Core, and the Helper only
+# starts a Core whose SHA256 matches the value built into it.
+spec_macros:
+  - '%global debug_package %{nil}'
+  - '%global __os_install_post %{nil}'
+
+postinstall_scripts:
+  - 'update-desktop-database %{_datadir}/applications &> /dev/null || :'
+
+# The Helper unit is written on demand by the app, not at install time, so only
+# its teardown belongs here; the binary is already gone when %postun runs.
+postuninstall_scripts:
+  - '[ "$1" = 0 ] || exit 0'
+  - 'systemctl disable --now usernet-helper.service >/dev/null 2>&1 || true'
+  - 'rm -f /etc/systemd/system/usernet-helper.service'
+  - 'systemctl daemon-reload >/dev/null 2>&1 || true'
+
+supported_mime_type:
+  - x-scheme-handler/usernet
+
+keywords:
+  - UserNet
+  - Clash
+  - Mihomo
+  - Proxy
+
+generic_name: VPN client
+generic_name_ru: VPN-клиент
+
+group: Applications/Internet
+
+startup_notify: true
+
+startup_wm_class: com.localzet.usernet

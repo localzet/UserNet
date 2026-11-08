@@ -1,0 +1,51 @@
+name: Багрепорт / Bug report
+description: Сообщите о воспроизводимой проблеме в UserNet / Report a reproducible problem
+title: "[BUG] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Проверьте, что похожая заявка ещё не открыта. Не вставляйте ссылки подписок, токены, IP приватных узлов, платёжные данные или неотредактированные логи. Уязвимости отправляйте приватно по [политике безопасности](https://github.com/localzet/UserNet/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Версия приложения / App version
+      placeholder: 0.5.x
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Платформа / Platform
+      options: [Android, Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Что произошло? / What happened?
+      description: Опишите ожидаемое и фактическое поведение. Укажите тип сети (Wi-Fi/мобильная), не раскрывая оператора или приватные адреса.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Шаги воспроизведения / Steps to reproduce
+      placeholder: 1. …
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Обезличенная диагностика / Redacted diagnostics
+      description: Удалите токены, ссылки подписки, cookies, IP/имена серверов, HWID, платёжные данные и персональные сведения до отправки.
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Проверка приватности / Privacy check
+      options:
+        - label: Я проверил текст и вложения и удалил секреты и персональные данные.
+          required: true

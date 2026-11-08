@@ -1,0 +1,27 @@
+display_name: UserNet
+
+icon: ./assets/images/usernet_icon.svg
+desktop_icon: com.localzet.usernet
+comment: Official Aura Network VPN client; also supports compatible Mihomo profiles
+comment_ru: Официальный VPN-клиент Aura Network с поддержкой совместимых профилей Mihomo
+
+supported_mime_type:
+  - x-scheme-handler/usernet
+
+keywords:
+  - UserNet
+  - Clash
+  - Mihomo
+  - Proxy
+
+generic_name: VPN client
+generic_name_ru: VPN-клиент
+
+categories:
+  - Network
+
+startup_notify: true
+
+startup_wm_class: com.localzet.usernet
+
+include: []

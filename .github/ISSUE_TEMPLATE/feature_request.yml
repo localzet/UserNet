@@ -1,0 +1,36 @@
+name: Идея / Feature request
+description: Предложите изменение и объясните, кому оно поможет / Suggest an improvement
+title: "[IDEA] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Сначала проверьте открытые и закрытые заявки на похожую идею. Для крупных изменений сначала обсудите замысел в Issue.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решаем? / What problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Предлагаемое решение / Proposed solution
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Платформа / Platform
+      multiple: true
+      options: [Android, Windows, macOS, Linux, Все / All]
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы и ограничения / Alternatives and constraints
+      description: Добавьте варианты, влияние на батарею/трафик/приватность или обратную совместимость.
+    validations:
+      required: false

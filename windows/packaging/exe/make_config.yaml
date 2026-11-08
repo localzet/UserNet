@@ -1,0 +1,15 @@
+script_template: inno_setup.iss
+app_id: 74DAF0B2-5D4A-432E-894D-10D4AD240E67
+app_name: UserNet
+publisher: localzet
+publisher_url: https://localzet.com
+display_name: UserNet
+executable_name: UserNet.exe
+output_base_file_name: UserNet.exe
+# Resolved against the project root: flutter_distributor turns this into an
+# absolute path via Directory.current.
+setup_icon_file: windows\runner\resources\app_icon.ico
+locales:
+  - lang: ru
+  - lang: en
+privileges_required: admin
