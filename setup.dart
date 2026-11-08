@@ -500,7 +500,8 @@ String _innoSetupCompiler() {
 const _innoLanguages = {
   'en': 'Name: "english"; MessagesFile: "compiler:Default.isl"',
   'ru': 'Name: "russian"; MessagesFile: "compiler:Languages\\Russian.isl"',
-  'zh': 'Name: "chineseSimplified"; MessagesFile: "compiler:Languages\\ChineseSimplified.isl"',
+  'zh':
+      'Name: "chineseSimplified"; MessagesFile: "compiler:Languages\\ChineseSimplified.isl"',
   'ja': 'Name: "japanese"; MessagesFile: "compiler:Languages\\Japanese.isl"',
   'ko': 'Name: "korean"; MessagesFile: "compiler:Languages\\Korean.isl"',
   'fr': 'Name: "french"; MessagesFile: "compiler:Languages\\French.isl"',
@@ -773,10 +774,9 @@ Future<void> _packageRpm(_Build build, String bundle) async {
     '--target',
     rpmArch,
   ]);
-  final built = Directory(p.join(top, 'RPMS', rpmArch))
-      .listSync()
-      .whereType<File>()
-      .where((f) => f.path.endsWith('.rpm'));
+  final built = Directory(
+    p.join(top, 'RPMS', rpmArch),
+  ).listSync().whereType<File>().where((f) => f.path.endsWith('.rpm'));
   if (built.isEmpty) {
     throw const ProcessException('rpmbuild', [], 'no RPM was created', 1);
   }

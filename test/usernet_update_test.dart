@@ -42,31 +42,28 @@ void main() {
     );
   });
 
-  test(
-    'uses the mirror when the primary update origin is unreachable',
-    () async {
-      final service = UserNetUpdateService(
-        platform: 'android',
-        client: MockClient((request) async {
-          if (request.url.host == 'updates.userlay.com') {
-            throw const SocketException('unreachable');
-          }
-          return http.Response(
-            '{"version":"0.5.2","build":2026102907,'
-            '"apkUrl":"https://www.userlay.com/usernet-updates/android/usernet.apk",'
-            '"sha256":"$digest"}',
-            200,
-            headers: {'content-type': 'application/json'},
-          );
-        }),
-      );
+  test('uses the mirror when the primary update origin is unreachable', () async {
+    final service = UserNetUpdateService(
+      platform: 'android',
+      client: MockClient((request) async {
+        if (request.url.host == 'updates.userlay.com') {
+          throw const SocketException('unreachable');
+        }
+        return http.Response(
+          '{"version":"0.5.2","build":2026102907,'
+          '"apkUrl":"https://www.userlay.com/usernet-updates/android/usernet.apk",'
+          '"sha256":"$digest"}',
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
 
-      final release = await service.latest();
+    final release = await service.latest();
 
-      expect(release?.build, 2026102907);
-      expect(release?.downloadUrl.host, 'www.userlay.com');
-    },
-  );
+    expect(release?.build, 2026102907);
+    expect(release?.downloadUrl.host, 'www.userlay.com');
+  });
 
   test('chooses the newest version across both update origins', () async {
     final service = UserNetUpdateService(
