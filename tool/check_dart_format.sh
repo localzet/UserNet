@@ -20,4 +20,9 @@ if ((${#dart_files[@]} == 0)); then
   exit 0
 fi
 
-dart format --output=none --set-exit-if-changed "${dart_files[@]}"
+if ! dart format --output=none --set-exit-if-changed "${dart_files[@]}"; then
+  dart format "${dart_files[@]}"
+  echo 'Apply this formatter diff to the source branch:' >&2
+  git diff -- "${dart_files[@]}" >&2
+  exit 1
+fi
