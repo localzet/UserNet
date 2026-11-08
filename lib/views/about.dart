@@ -68,7 +68,10 @@ class AboutView extends ConsumerWidget {
 
   Future<void> _checkUpdate(BuildContext context, WidgetRef ref) async {
     if (ref.read(loadingProvider(LoadingTag.checkUpdate))) return;
-    if ((system.isAndroid || system.isWindows || system.isLinux) &&
+    if ((system.isAndroid ||
+            system.isWindows ||
+            system.isLinux ||
+            system.isMacOS) &&
         !userNetAdminBuild) {
       await _checkUserNetUpdate(context, ref);
       return;
@@ -102,7 +105,7 @@ class AboutView extends ConsumerWidget {
         title: Text('Доступно обновление ${availableRelease.version}'),
         content: Text(
           availableRelease.notes.isEmpty
-              ? (system.isWindows || system.isLinux)
+              ? (system.isWindows || system.isLinux || system.isMacOS)
                     ? 'Открыть страницу загрузки установщика?'
                     : 'Скачать и проверить APK?'
               : availableRelease.notes,
@@ -120,7 +123,7 @@ class AboutView extends ConsumerWidget {
       ),
     );
     if (shouldInstall != true || !context.mounted) return;
-    if (system.isWindows || system.isLinux) {
+    if (system.isWindows || system.isLinux || system.isMacOS) {
       if (!await launchUrl(
             release.downloadUrl,
             mode: LaunchMode.externalApplication,

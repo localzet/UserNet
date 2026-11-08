@@ -1,5 +1,8 @@
 include: lint_options.yaml
 
+formatter:
+  trailing_commas: automate
+
 analyzer:
   exclude:
     - build/**
