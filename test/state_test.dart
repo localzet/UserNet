@@ -35,7 +35,9 @@ void main() {
     final style = container.read(themeSettingProvider).colorStyle;
 
     expect(
-      container.read(genColorSchemeProvider(Brightness.light)),
+      container.read(
+        genColorSchemeProvider(Brightness.light, pureBlack: false),
+      ),
       seededColorScheme(
         seedColor: lightSeed,
         brightness: Brightness.light,
@@ -43,7 +45,9 @@ void main() {
       ),
     );
     expect(
-      container.read(genColorSchemeProvider(Brightness.dark)),
+      container.read(
+        genColorSchemeProvider(Brightness.dark, pureBlack: false),
+      ),
       seededColorScheme(
         seedColor: darkSeed,
         brightness: Brightness.dark,

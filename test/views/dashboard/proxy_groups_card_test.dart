@@ -1,4 +1,6 @@
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/core/controller.dart';
+import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -11,11 +13,14 @@ import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:mocktail/mocktail.dart';
 
 import '../../helpers/test_app.dart';
 import '../../helpers/test_profiles.dart';
 
 const _testUrl = 'https://test.example/generate_204';
+
+class _MockCore extends Mock implements CoreHandlerInterface {}
 
 Group _group(String name, List<String> proxies, {String? now}) => Group(
   type: GroupType.Selector,
@@ -30,8 +35,14 @@ void main() {
   late ProviderContainer container;
 
   setUp(() {
+    final core = _MockCore();
+    when(() => core.watchRoute(true)).thenAnswer(
+      (_) async => const RouteSnapshot(coreEpoch: 1, routeVersion: 0),
+    );
+    when(() => core.watchRoute(false)).thenAnswer((_) async => null);
     container = ProviderContainer(
       overrides: [
+        coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
         profilesProvider.overrideWith(
           () => TestProfiles([
             const Profile(
