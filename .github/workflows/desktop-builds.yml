@@ -84,3 +84,105 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+
+  github-release:
+    name: Publish verified GitHub release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-pre.')
+    needs: [windows, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag is on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Download desktop build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name usernet-windows-x64 --dir "$RUNNER_TEMP/artifacts/windows"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name usernet-macos-arm64 --dir "$RUNNER_TEMP/artifacts/macos-arm64"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name usernet-macos-amd64 --dir "$RUNNER_TEMP/artifacts/macos-amd64"
+          mkdir -p release-assets
+          find "$RUNNER_TEMP/artifacts" -type f ! -name SHA256SUMS.txt \
+            -exec cp {} release-assets/ \;
+
+      - name: Add current signed Android and Linux packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release-assets
+
+          android_manifest="$(mktemp)"
+          linux_manifest="$(mktemp)"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            https://updates.userlay.com/android/stable.json -o "$android_manifest"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            https://updates.userlay.com/linux/stable.json -o "$linux_manifest"
+
+          test "$(jq -er '.version' "$android_manifest")" = "$version"
+          test "$(jq -er '.version' "$linux_manifest")" = "$version"
+          android_url="$(jq -er '.apkUrl' "$android_manifest")"
+          linux_url="$(jq -er '.debUrl' "$linux_manifest")"
+          android_sha="$(jq -er '.sha256' "$android_manifest")"
+          linux_sha="$(jq -er '.sha256' "$linux_manifest")"
+          [[ "$android_url" == https://updates.userlay.com/android/* ]]
+          [[ "$linux_url" == https://updates.userlay.com/linux/* ]]
+          [[ "$android_sha" =~ ^[a-f0-9]{64}$ && "$linux_sha" =~ ^[a-f0-9]{64}$ ]]
+
+          android_file="release-assets/UserNet-android.apk"
+          linux_file="release-assets/UserNet-linux.deb"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "$android_url" -o "$android_file"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "$linux_url" -o "$linux_file"
+          printf '%s  %s\n' "$android_sha" "$android_file" | sha256sum --check --strict
+          printf '%s  %s\n' "$linux_sha" "$linux_file" | sha256sum --check --strict
+
+      - name: Prepare release notes and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v version="$version" '
+            $0 ~ "^## " version "([[:space:]]|$)" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+            END { if (!found) exit 1 }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          test -s "$RUNNER_TEMP/release-notes.md"
+          cat >> "$RUNNER_TEMP/release-notes.md" <<'EOF'
+
+          ### macOS installation
+          These macOS packages are not signed with Developer ID or notarized. On first launch, approve UserNet in System Settings → Privacy & Security.
+          EOF
+          (cd release-assets && sha256sum * > SHA256SUMS.txt)
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "UserNet ${GITHUB_REF_NAME#v}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
