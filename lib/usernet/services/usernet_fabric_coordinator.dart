@@ -197,12 +197,32 @@ class UserNetFabricCoordinator {
       socksPort: requestedConfig.socksPort,
       proxyName: requestedConfig.proxyName,
     );
-    if (_busy) {
+    if (_busy && forceRequestedMode) {
+      final waitDeadline = DateTime.now().add(const Duration(minutes: 2));
+      while (_busy) {
+        final busyMode = _mode;
+        while (_busy && DateTime.now().isBefore(waitDeadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        if (_busy) return false;
+        final carrierReady = _fabricActive && await _hasConnectedCarrier();
+        if (_busy) continue;
+        if (carrierReady) return true;
+        if (!shouldRetryUserNetTransportAfterBusyOperation(
+          requested: config.mode,
+          busyMode: busyMode,
+        )) {
+          return false;
+        }
+      }
+      forceProbe = true;
+    } else if (_busy) {
       return waitForReady
           ? _waitForReadyCarrier()
           : _fabricActive && await _hasConnectedCarrier();
     }
     if (!forceProbe &&
+        !forceRequestedMode &&
         !waitForReady &&
         _lastProbeAt != null &&
         DateTime.now().difference(_lastProbeAt!) < const Duration(seconds: 6)) {

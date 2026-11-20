@@ -94,4 +94,21 @@ void main() {
       UserNetTransportMode.direct,
     );
   });
+
+  test('forced account transport retries after a different busy mode', () {
+    expect(
+      shouldRetryUserNetTransportAfterBusyOperation(
+        requested: UserNetTransportMode.fabric,
+        busyMode: UserNetTransportMode.direct,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldRetryUserNetTransportAfterBusyOperation(
+        requested: UserNetTransportMode.fabric,
+        busyMode: UserNetTransportMode.fabric,
+      ),
+      isFalse,
+    );
+  });
 }

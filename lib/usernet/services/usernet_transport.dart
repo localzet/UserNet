@@ -32,6 +32,12 @@ UserNetTransportMode resolveUserNetTransportMode({
 }) =>
     forceRequested || preferred == null ? requested : preferred;
 
+bool shouldRetryUserNetTransportAfterBusyOperation({
+  required UserNetTransportMode requested,
+  required UserNetTransportMode? busyMode,
+}) =>
+    busyMode != requested;
+
 bool shouldWaitForUserNetCarrierBeforeVpnStart(
   UserNetTransportMode mode, {
   required bool alreadyActive,
