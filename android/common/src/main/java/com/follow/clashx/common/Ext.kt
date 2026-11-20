@@ -38,6 +38,7 @@ val QuickAction.quickIntent: Intent
     get() = Components.quickActionActivity.intent.apply {
         action = this@quickIntent.action
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+        QuickActionIntentAuthorization.attachToken(this)
     }
 
 val BroadcastAction.action: String

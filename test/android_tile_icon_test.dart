@@ -93,6 +93,32 @@ void main() {
     expect(action, isNot(contains('handle(intent)\n        finish()')));
   });
 
+  test('exported quick actions require an app-private authorization token', () {
+    final activity = File(
+      'android/app/src/main/kotlin/com/follow/clashx/QuickActionActivity.kt',
+    ).readAsStringSync();
+    final intentFactory = File(
+      'android/common/src/main/java/com/follow/clashx/common/Ext.kt',
+    ).readAsStringSync();
+    final authorization = File(
+      'android/common/src/main/java/com/follow/clashx/common/'
+      'QuickActionIntentAuthorization.kt',
+    ).readAsStringSync();
+
+    final authorizationCheck = activity.indexOf(
+      'QuickActionIntentAuthorization.isAuthorized(this, intent)',
+    );
+    final dispatch = activity.indexOf('ServiceState.handleQuickAction(action)');
+    expect(authorizationCheck, greaterThanOrEqualTo(0));
+    expect(dispatch, greaterThan(authorizationCheck));
+    expect(
+      intentFactory,
+      contains('QuickActionIntentAuthorization.attachToken(this)'),
+    );
+    expect(authorization, contains('Context.MODE_PRIVATE'));
+    expect(authorization, contains('MessageDigest.isEqual'));
+  });
+
   test('VPN and proxy services remain started when the task is removed', () {
     final manifest = File(
       'android/service/src/main/AndroidManifest.xml',

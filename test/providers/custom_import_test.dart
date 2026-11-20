@@ -63,6 +63,52 @@ Matcher _issue(CustomImportIssue issue, {String? item}) =>
 
 void main() {
   group('proxy providers', () {
+    test('preserves Mihomo provider health and group selection options', () {
+      final config = _read('''
+proxy-providers:
+  bypass:
+    type: http
+    url: https://example.com/nodes
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 600
+      timeout: 5000
+      expected-status: 204
+proxy-groups:
+  - name: Обход
+    type: url-test
+    proxies: [DIRECT]
+    use: [bypass]
+    use-position: {bypass: 0}
+    include-all-providers: true
+    exclude-filter: '^(RU|Personal)'
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    timeout: 5000
+    expected-status: 204
+''');
+      final group = config.proxyGroups.single;
+
+      expect(group.use, ['bypass']);
+      expect(group.usePosition, {'bypass': 0});
+      expect(group.includeAllProviders, isTrue);
+      expect(group.excludeFilter, '^(RU|Personal)');
+      expect(group.url, 'https://www.gstatic.com/generate_204');
+      expect(group.interval, 300);
+      expect(group.timeout, 5000);
+      expect(group.expectedStatus, '204');
+      expect(
+        config.overrides.proxyProviders['bypass']?.healthCheck,
+        const ProviderHealthCheck(
+          url: 'https://www.gstatic.com/generate_204',
+          interval: 600,
+          timeout: 5000,
+          expectedStatus: '204',
+        ),
+      );
+    });
+
     test('uses a provider the app already has under its label', () {
       final config = _read('''
 proxy-providers:

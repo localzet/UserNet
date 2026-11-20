@@ -6,6 +6,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yaml/yaml.dart';
 
 void main() {
+  test('suggests gstatic for provider and proxy-group health checks', () {
+    const expectedUrl = 'https://www.gstatic.com/generate_204';
+    final configFields = EditorSchema.config.root.fields;
+    final providerSchema = configFields['proxy-providers']!.entry!;
+    final providerHealthCheck = providerSchema.fields['health-check']!;
+    final proxyGroup = configFields['proxy-groups']!.entry!;
+
+    expect(providerHealthCheck.fields['url']!.values, [expectedUrl]);
+    expect(proxyGroup.fields['url']!.values, [expectedUrl]);
+  });
+
   Object? relaxed(String content, [EditorSchema schema = EditorSchema.dns]) =>
       loadYaml(relaxYaml(content, schema)!);
 
