@@ -76,7 +76,9 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
-          packages: 'platforms;android-37 ndk;28.2.13676358'
+          packages: 'ndk;28.2.13676358'
+      - name: Install Android 17 preview platform
+        run: yes | sdkmanager --channel=3 'platforms;android-37'
       - uses: subosito/flutter-action@e938fdf56512cc96ef2f93601a5a40bde3801046 # v2.19.0
         with:
           flutter-version: 3.47.6
