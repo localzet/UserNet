@@ -200,7 +200,6 @@ class UserNetFabricCoordinator {
     if (_busy && forceRequestedMode) {
       final waitDeadline = DateTime.now().add(const Duration(minutes: 2));
       while (_busy) {
-        final busyMode = _mode;
         while (_busy && DateTime.now().isBefore(waitDeadline)) {
           await Future<void>.delayed(const Duration(milliseconds: 100));
         }
@@ -209,8 +208,8 @@ class UserNetFabricCoordinator {
         if (_busy) continue;
         if (carrierReady) return true;
         if (!shouldRetryUserNetTransportAfterBusyOperation(
-          requested: config.mode,
-          busyMode: busyMode,
+          forceRequestedMode: forceRequestedMode,
+          carrierReady: carrierReady,
         )) {
           return false;
         }

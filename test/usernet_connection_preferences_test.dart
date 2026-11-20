@@ -98,18 +98,25 @@ void main() {
     );
   });
 
-  test('forced account transport retries after a different busy mode', () {
+  test('forced account transport retries when the busy attempt failed', () {
     expect(
       shouldRetryUserNetTransportAfterBusyOperation(
-        requested: UserNetTransportMode.fabric,
-        busyMode: UserNetTransportMode.direct,
+        forceRequestedMode: true,
+        carrierReady: false,
       ),
       isTrue,
     );
     expect(
       shouldRetryUserNetTransportAfterBusyOperation(
-        requested: UserNetTransportMode.fabric,
-        busyMode: UserNetTransportMode.fabric,
+        forceRequestedMode: true,
+        carrierReady: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldRetryUserNetTransportAfterBusyOperation(
+        forceRequestedMode: false,
+        carrierReady: false,
       ),
       isFalse,
     );
