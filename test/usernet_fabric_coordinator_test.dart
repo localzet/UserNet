@@ -25,6 +25,9 @@ void main() {
     });
 
     final firstStart = Completer<void>();
+    final failFirstStart = Completer<void>();
+    final forcedWaitStarted = Completer<void>();
+    final releaseForcedWait = Completer<void>();
     var startCalls = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(transportChannel, (call) async {
@@ -33,8 +36,7 @@ void main() {
               startCalls++;
               if (startCalls == 1) {
                 firstStart.complete();
-                await Future<void>.delayed(const Duration(milliseconds: 25));
-                throw PlatformException(code: 'START_FAILED');
+                await failFirstStart.future;
               }
               return null;
             case 'getStatus':
@@ -50,7 +52,13 @@ void main() {
           .setMockMethodCallHandler(transportChannel, null),
     );
 
-    final coordinator = UserNetFabricCoordinator(isAndroid: () => true);
+    final coordinator = UserNetFabricCoordinator(
+      isAndroid: () => true,
+      busyWait: (_) {
+        if (!forcedWaitStarted.isCompleted) forcedWaitStarted.complete();
+        return releaseForcedWait.future;
+      },
+    );
     const config = UserNetTransportConfig(
       enabled: true,
       mode: UserNetTransportMode.fabric,
@@ -64,17 +72,22 @@ void main() {
       forceProbe: true,
     );
     await firstStart.future;
+    final parallelFailure = expectLater(
+      parallelFabricAttempt,
+      throwsA(isA<PlatformException>()),
+    );
 
     final accountRecovery = coordinator.ensure(
       config,
       forceProbe: true,
       forceRequestedMode: true,
     );
+    await forcedWaitStarted.future;
 
-    await expectLater(
-      parallelFabricAttempt,
-      throwsA(isA<PlatformException>()),
-    );
+    failFirstStart.completeError(PlatformException(code: 'START_FAILED'));
+    await parallelFailure;
+    releaseForcedWait.complete();
+
     expect(await accountRecovery, isTrue);
     expect(startCalls, 2);
   });

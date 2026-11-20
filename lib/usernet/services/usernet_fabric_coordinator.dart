@@ -134,10 +134,15 @@ class UserNetNetworkHandover {
 }
 
 class UserNetFabricCoordinator {
-  UserNetFabricCoordinator({bool Function()? isAndroid})
-    : _isAndroid = isAndroid ?? (() => Platform.isAndroid);
+  UserNetFabricCoordinator({
+    bool Function()? isAndroid,
+    Future<void> Function(Duration)? busyWait,
+  }) : _isAndroid = isAndroid ?? (() => Platform.isAndroid),
+       _busyWait =
+           busyWait ?? ((duration) => Future<void>.delayed(duration));
 
   final bool Function() _isAndroid;
+  final Future<void> Function(Duration) _busyWait;
   UserNetFallbackController? _fallback;
   UserNetTransportMode? _mode;
   bool _fabricActive = false;
@@ -205,7 +210,7 @@ class UserNetFabricCoordinator {
       final waitDeadline = DateTime.now().add(const Duration(minutes: 2));
       while (_busy) {
         while (_busy && DateTime.now().isBefore(waitDeadline)) {
-          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await _busyWait(const Duration(milliseconds: 100));
         }
         if (_busy) return false;
         final carrierReady = _fabricActive && await _hasConnectedCarrier();
