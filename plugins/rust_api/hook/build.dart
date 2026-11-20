@@ -57,8 +57,10 @@ Future<Map<String, String>> _bindgenEnvironment(BuildInput input) async {
     _ => targetTriple,
   };
   final sysroot = '${llvmRoot.path}${Platform.pathSeparator}sysroot';
+  // Bindgen can parse bionic pthread types before their integer typedefs.
   final bindgenArgs =
       '--sysroot=$sysroot '
+      '-include $sysroot/usr/include/stdint.h '
       '-I$sysroot/usr/include/$sysrootTriple '
       '-I${clangInclude.path}';
   for (final name in const ['lib', 'lib64']) {
