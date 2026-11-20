@@ -2,7 +2,7 @@ module core
 
 go 1.27.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 // The browser fingerprints mihomo names (Firefox 148, Safari 26.3 and up)
 // live on utls' `v1.9.0-mod-meta` branch, which has no tag.

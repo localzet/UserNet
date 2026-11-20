@@ -28,7 +28,7 @@ jobs:
           channel: stable
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache-dependency-path: core/go.sum
       - uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
@@ -67,7 +67,7 @@ jobs:
           channel: stable
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache-dependency-path: core/go.sum
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
