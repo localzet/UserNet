@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import com.follow.clashx.common.GlobalState
 import com.follow.clashx.common.QuickAction
+import com.follow.clashx.common.QuickActionIntentAuthorization
 import com.follow.clashx.common.action
 import com.follow.clashx.common.shortcutId
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,11 @@ class QuickActionActivity : Activity() {
     }
 
     private fun handle(intent: Intent) {
+        if (!QuickActionIntentAuthorization.isAuthorized(this, intent)) {
+            finish()
+            return
+        }
+
         val action = QuickAction.entries.firstOrNull { it.action == intent.action }
             ?: run {
                 finish()
