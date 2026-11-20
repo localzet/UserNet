@@ -25,6 +25,17 @@ enum UserNetTransportMode {
       };
 }
 
+UserNetTransportMode resolveUserNetTransportMode({
+  required UserNetTransportMode requested,
+  required UserNetTransportMode? preferred,
+  bool forceRequested = false,
+}) => forceRequested || preferred == null ? requested : preferred;
+
+bool shouldRetryUserNetTransportAfterBusyOperation({
+  required bool forceRequestedMode,
+  required bool carrierReady,
+}) => forceRequestedMode && !carrierReady;
+
 bool shouldWaitForUserNetCarrierBeforeVpnStart(
   UserNetTransportMode mode, {
   required bool alreadyActive,

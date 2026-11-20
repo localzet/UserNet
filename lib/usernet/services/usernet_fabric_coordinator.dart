@@ -134,6 +134,14 @@ class UserNetNetworkHandover {
 }
 
 class UserNetFabricCoordinator {
+  UserNetFabricCoordinator({
+    bool Function()? isAndroid,
+    Future<void> Function(Duration)? busyWait,
+  }) : _isAndroid = isAndroid ?? (() => Platform.isAndroid),
+       _busyWait = busyWait ?? ((duration) => Future<void>.delayed(duration));
+
+  final bool Function() _isAndroid;
+  final Future<void> Function(Duration) _busyWait;
   UserNetFallbackController? _fallback;
   UserNetTransportMode? _mode;
   bool _fabricActive = false;
@@ -180,24 +188,48 @@ class UserNetFabricCoordinator {
   Future<bool> ensure(
     UserNetTransportConfig requestedConfig, {
     bool forceProbe = false,
+    bool forceRequestedMode = false,
     bool waitForReady = false,
     Future<bool> Function()? directProbe,
   }) async {
-    if (!Platform.isAndroid || !requestedConfig.enabled) return false;
+    if (!_isAndroid() || !requestedConfig.enabled) return false;
     await userNetPreferences.load();
     final config = UserNetTransportConfig(
       enabled: requestedConfig.enabled,
-      mode: userNetPreferences.mode ?? requestedConfig.mode,
+      mode: resolveUserNetTransportMode(
+        requested: requestedConfig.mode,
+        preferred: userNetPreferences.mode,
+        forceRequested: forceRequestedMode,
+      ),
       socksHost: requestedConfig.socksHost,
       socksPort: requestedConfig.socksPort,
       proxyName: requestedConfig.proxyName,
     );
-    if (_busy) {
+    if (_busy && forceRequestedMode) {
+      final waitDeadline = DateTime.now().add(const Duration(minutes: 2));
+      while (_busy) {
+        while (_busy && DateTime.now().isBefore(waitDeadline)) {
+          await _busyWait(const Duration(milliseconds: 100));
+        }
+        if (_busy) return false;
+        final carrierReady = _fabricActive && await _hasConnectedCarrier();
+        if (_busy) continue;
+        if (carrierReady) return true;
+        if (!shouldRetryUserNetTransportAfterBusyOperation(
+          forceRequestedMode: forceRequestedMode,
+          carrierReady: carrierReady,
+        )) {
+          return false;
+        }
+      }
+      forceProbe = true;
+    } else if (_busy) {
       return waitForReady
           ? _waitForReadyCarrier()
           : _fabricActive && await _hasConnectedCarrier();
     }
     if (!forceProbe &&
+        !forceRequestedMode &&
         !waitForReady &&
         _lastProbeAt != null &&
         DateTime.now().difference(_lastProbeAt!) < const Duration(seconds: 6)) {

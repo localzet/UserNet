@@ -342,6 +342,7 @@ class _AccountViewState extends ConsumerState<UserNetAccountView>
         proxyName: userNetCarrierProxyName,
       ),
       forceProbe: true,
+      forceRequestedMode: true,
     );
   }
 

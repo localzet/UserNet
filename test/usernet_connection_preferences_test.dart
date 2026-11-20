@@ -35,16 +35,19 @@ void main() {
     expect(state.connected, isFalse);
     expect(state.transport, UserNetConnectionPhase.idle);
   });
-  test('carrier failures explain the fallback without requiring a phone call', () {
-    final state = UserNetConnectionSnapshot.fromMap({
-      'status': 'ERROR:TRANSPORT_UNREACHABLE',
-      'controlState': 'failed',
-      'transportState': 'failed',
-    });
-    expect(state.failureMessage, contains('первое подключение'));
-    expect(state.failureMessage, contains('доступной сети'));
-    expect(state.failureMessage, isNot(contains('совершите звонок')));
-  });
+  test(
+    'carrier failures explain the fallback without requiring a phone call',
+    () {
+      final state = UserNetConnectionSnapshot.fromMap({
+        'status': 'ERROR:TRANSPORT_UNREACHABLE',
+        'controlState': 'failed',
+        'transportState': 'failed',
+      });
+      expect(state.failureMessage, contains('первое подключение'));
+      expect(state.failureMessage, contains('доступной сети'));
+      expect(state.failureMessage, isNot(contains('совершите звонок')));
+    },
+  );
   test(
     'manual mode and both providers survive a fresh preferences instance',
     () async {
@@ -75,5 +78,47 @@ void main() {
     await prefs.load();
     expect(prefs.mode, isNull);
     expect(prefs.workCarrier, 'auto');
+  });
+
+  test('account carrier can override a saved direct transport mode', () {
+    expect(
+      resolveUserNetTransportMode(
+        requested: UserNetTransportMode.fabric,
+        preferred: UserNetTransportMode.direct,
+        forceRequested: true,
+      ),
+      UserNetTransportMode.fabric,
+    );
+    expect(
+      resolveUserNetTransportMode(
+        requested: UserNetTransportMode.fabric,
+        preferred: UserNetTransportMode.direct,
+      ),
+      UserNetTransportMode.direct,
+    );
+  });
+
+  test('forced account transport retries when the busy attempt failed', () {
+    expect(
+      shouldRetryUserNetTransportAfterBusyOperation(
+        forceRequestedMode: true,
+        carrierReady: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldRetryUserNetTransportAfterBusyOperation(
+        forceRequestedMode: true,
+        carrierReady: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldRetryUserNetTransportAfterBusyOperation(
+        forceRequestedMode: false,
+        carrierReady: false,
+      ),
+      isFalse,
+    );
   });
 }
