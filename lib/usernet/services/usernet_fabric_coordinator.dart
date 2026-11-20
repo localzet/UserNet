@@ -134,6 +134,10 @@ class UserNetNetworkHandover {
 }
 
 class UserNetFabricCoordinator {
+  UserNetFabricCoordinator({bool Function()? isAndroid})
+    : _isAndroid = isAndroid ?? (() => Platform.isAndroid);
+
+  final bool Function() _isAndroid;
   UserNetFallbackController? _fallback;
   UserNetTransportMode? _mode;
   bool _fabricActive = false;
@@ -184,7 +188,7 @@ class UserNetFabricCoordinator {
     bool waitForReady = false,
     Future<bool> Function()? directProbe,
   }) async {
-    if (!Platform.isAndroid || !requestedConfig.enabled) return false;
+    if (!_isAndroid() || !requestedConfig.enabled) return false;
     await userNetPreferences.load();
     final config = UserNetTransportConfig(
       enabled: requestedConfig.enabled,
