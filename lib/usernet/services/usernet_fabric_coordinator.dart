@@ -138,8 +138,7 @@ class UserNetFabricCoordinator {
     bool Function()? isAndroid,
     Future<void> Function(Duration)? busyWait,
   }) : _isAndroid = isAndroid ?? (() => Platform.isAndroid),
-       _busyWait =
-           busyWait ?? ((duration) => Future<void>.delayed(duration));
+       _busyWait = busyWait ?? ((duration) => Future<void>.delayed(duration));
 
   final bool Function() _isAndroid;
   final Future<void> Function(Duration) _busyWait;
