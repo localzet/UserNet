@@ -35,16 +35,19 @@ void main() {
     expect(state.connected, isFalse);
     expect(state.transport, UserNetConnectionPhase.idle);
   });
-  test('carrier failures explain the fallback without requiring a phone call', () {
-    final state = UserNetConnectionSnapshot.fromMap({
-      'status': 'ERROR:TRANSPORT_UNREACHABLE',
-      'controlState': 'failed',
-      'transportState': 'failed',
-    });
-    expect(state.failureMessage, contains('первое подключение'));
-    expect(state.failureMessage, contains('доступной сети'));
-    expect(state.failureMessage, isNot(contains('совершите звонок')));
-  });
+  test(
+    'carrier failures explain the fallback without requiring a phone call',
+    () {
+      final state = UserNetConnectionSnapshot.fromMap({
+        'status': 'ERROR:TRANSPORT_UNREACHABLE',
+        'controlState': 'failed',
+        'transportState': 'failed',
+      });
+      expect(state.failureMessage, contains('первое подключение'));
+      expect(state.failureMessage, contains('доступной сети'));
+      expect(state.failureMessage, isNot(contains('совершите звонок')));
+    },
+  );
   test(
     'manual mode and both providers survive a fresh preferences instance',
     () async {

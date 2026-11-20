@@ -29,14 +29,12 @@ UserNetTransportMode resolveUserNetTransportMode({
   required UserNetTransportMode requested,
   required UserNetTransportMode? preferred,
   bool forceRequested = false,
-}) =>
-    forceRequested || preferred == null ? requested : preferred;
+}) => forceRequested || preferred == null ? requested : preferred;
 
 bool shouldRetryUserNetTransportAfterBusyOperation({
   required UserNetTransportMode requested,
   required UserNetTransportMode? busyMode,
-}) =>
-    busyMode != requested;
+}) => busyMode != requested;
 
 bool shouldWaitForUserNetCarrierBeforeVpnStart(
   UserNetTransportMode mode, {
