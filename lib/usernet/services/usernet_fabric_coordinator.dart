@@ -180,6 +180,7 @@ class UserNetFabricCoordinator {
   Future<bool> ensure(
     UserNetTransportConfig requestedConfig, {
     bool forceProbe = false,
+    bool forceRequestedMode = false,
     bool waitForReady = false,
     Future<bool> Function()? directProbe,
   }) async {
@@ -187,7 +188,11 @@ class UserNetFabricCoordinator {
     await userNetPreferences.load();
     final config = UserNetTransportConfig(
       enabled: requestedConfig.enabled,
-      mode: userNetPreferences.mode ?? requestedConfig.mode,
+      mode: resolveUserNetTransportMode(
+        requested: requestedConfig.mode,
+        preferred: userNetPreferences.mode,
+        forceRequested: forceRequestedMode,
+      ),
       socksHost: requestedConfig.socksHost,
       socksPort: requestedConfig.socksPort,
       proxyName: requestedConfig.proxyName,

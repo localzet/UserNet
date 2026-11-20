@@ -76,4 +76,22 @@ void main() {
     expect(prefs.mode, isNull);
     expect(prefs.workCarrier, 'auto');
   });
+
+  test('account carrier can override a saved direct transport mode', () {
+    expect(
+      resolveUserNetTransportMode(
+        requested: UserNetTransportMode.fabric,
+        preferred: UserNetTransportMode.direct,
+        forceRequested: true,
+      ),
+      UserNetTransportMode.fabric,
+    );
+    expect(
+      resolveUserNetTransportMode(
+        requested: UserNetTransportMode.fabric,
+        preferred: UserNetTransportMode.direct,
+      ),
+      UserNetTransportMode.direct,
+    );
+  });
 }
