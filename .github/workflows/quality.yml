@@ -87,6 +87,26 @@ jobs:
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           gradle-version: '9.8.0'
+      - name: Select Android NDK for Flutter hooks
+        shell: bash
+        run: |
+          ndk="${ANDROID_HOME:?ANDROID_HOME is not set}/ndk/28.2.13676358"
+          clang_root="$ndk/toolchains/llvm/prebuilt/linux-x86_64"
+          test -x "$clang_root/bin/clang"
+
+          found_libclang=false
+          for directory in "$clang_root/lib" "$clang_root/lib64"; do
+            if compgen -G "$directory/libclang.*" >/dev/null; then
+              found_libclang=true
+              break
+            fi
+          done
+          if [[ "$found_libclang" != true ]]; then
+            echo "NDK 28.2 is missing libclang required by Flutter native hooks." >&2
+            exit 1
+          fi
+
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - run: flutter pub get
       - run: gradle -p android --no-daemon :common:testDebugUnitTest :app:compileDebugKotlin
 
