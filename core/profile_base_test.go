@@ -236,6 +236,32 @@ func TestLoadConfigWithBasePutsTheAddedRulesFirstAndTheOverlayOverTheRest(t *tes
 	}
 }
 
+func TestLoadConfigWithBaseOverridesProfileMatchRules(t *testing.T) {
+	path := writeBaseProfile(t, baseProfile)
+	base, err := handleGetProfileBase(path)
+	if err != nil {
+		t.Fatalf("handleGetProfileBase = %v", err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfg, err := loadConfigWithBase(&SetupBase{
+		Path:        path,
+		Overlay:     overlayOf(t, base, nil, nil),
+		MatchTarget: "g",
+	}, configPath)
+	if err != nil {
+		t.Fatalf("loadConfigWithBase = %v", err)
+	}
+
+	want := []string{
+		"DomainSuffix,example.com,g",
+		"Match,,g",
+		"Match,,g",
+	}
+	if got := ruleStrings(cfg); !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want %v", got, want)
+	}
+}
+
 // The Android service and mihomo's controller reload config.yaml without the
 // profile, and the anchor it was written with sits in a section the overlay drops.
 func TestLoadConfigWithBaseWritesAConfigThatLoadsAlone(t *testing.T) {

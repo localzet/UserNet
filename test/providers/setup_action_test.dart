@@ -1442,10 +1442,19 @@ void main() {
         'differ from the applied config', () async {
       final profile = Profile.normal(label: 'p');
       final core = _MockCoreHandlerInterface();
-      when(
-        () => core.getProfileBase(any()),
-      ).thenAnswer((_) async => const ProfileBase(config: {}, digest: 'd'));
-      when(() => core.setupConfig(any())).thenAnswer((_) async => '');
+      when(() => core.getProfileBase(any())).thenAnswer(
+        (_) async => const ProfileBase(
+          config: {},
+          digest: 'd',
+          matchRules: ['MATCH,PROFILE'],
+        ),
+      );
+      final appliedMatchTargets = <String?>[];
+      when(() => core.setupConfig(any())).thenAnswer((invocation) async {
+        final params = invocation.positionalArguments.single as SetupParams;
+        appliedMatchTargets.add(params.base?.matchTarget);
+        return '';
+      });
       var setupState = nullProfileSetupState.copyWith(profileId: profile.id);
       final scoped = ProviderContainer(
         overrides: [
@@ -1469,6 +1478,7 @@ void main() {
 
       await setupAction.applyProfile(force: true);
       verify(() => core.getProfileBase(any())).called(1);
+      expect(appliedMatchTargets, [null]);
 
       await leaveEditor();
       verifyNever(() => core.getProfileBase(any()));
@@ -1480,6 +1490,7 @@ void main() {
       // Queued behind the rebuild: one that outlasts the pump would compare
       // against the md5 tearDown resets and push into a disposed container.
       await setupAction.applyProfile();
+      expect(appliedMatchTargets, [null, 'DIRECT']);
     });
 
     test('a debounced apply waits as long as the last push to the Core took, '

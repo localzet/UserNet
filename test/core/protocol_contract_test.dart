@@ -420,7 +420,11 @@ void main() {
 
   test('the outbounds and the built profile cross as plain JSON', () async {
     final handler = _RecordingCoreHandler();
-    const base = SetupBase(path: '/profiles/1.yaml', overlay: 'mode: rule');
+    const base = SetupBase(
+      path: '/profiles/1.yaml',
+      overlay: 'mode: rule',
+      matchTarget: 'Proxy',
+    );
 
     final outbounds = await handler.getProfileOutbounds('/profiles/1.yaml');
     final built = await handler.buildProfile(base);
@@ -430,6 +434,7 @@ void main() {
       {'name': 'a', 'type': 'ss'},
     ]);
     expect(handler.calls[CoreMethod.buildProfile], base.toJson());
+    expect(base.toJson()['match-target'], 'Proxy');
     expect(built, '/home/responses/1.yaml');
   });
 

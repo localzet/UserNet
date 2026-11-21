@@ -184,6 +184,35 @@ func isMatchRule(rule string) bool {
 	return strings.EqualFold(strings.TrimSpace(kind), "MATCH")
 }
 
+func overrideMatchRules(rules *yaml.Node, target string) *yaml.Node {
+	target = strings.TrimSpace(target)
+	sequence := resolveAlias(rules)
+	if target == "" || sequence == nil || sequence.Kind != yaml.SequenceNode {
+		return rules
+	}
+
+	content := append([]*yaml.Node(nil), sequence.Content...)
+	for index, rule := range content {
+		scalar := resolveAlias(rule)
+		if scalar == nil || scalar.Kind != yaml.ScalarNode || !isMatchRule(scalar.Value) {
+			continue
+		}
+
+		updated := *scalar
+		updated.Anchor = ""
+		if comma := strings.IndexByte(scalar.Value, ','); comma >= 0 {
+			updated.Value = scalar.Value[:comma+1] + target
+		} else {
+			updated.Value = scalar.Value + "," + target
+		}
+		content[index] = &updated
+	}
+
+	updated := *sequence
+	updated.Content = content
+	return &updated
+}
+
 func loadConfigWithBase(base *SetupBase, configPath string) (*config.Config, error) {
 	document, err := mergeProfileBase(base)
 	if err != nil {
@@ -233,7 +262,11 @@ func mergeProfileBase(base *SetupBase) (*yaml.Node, error) {
 			setMappingValue(root, key, value)
 		}
 	}
-	rules, err := appendRules(mappingValue(root, "rules"), mappingValue(profile, "rules"))
+	profileRules := mappingValue(profile, "rules")
+	if strings.TrimSpace(base.MatchTarget) != "" {
+		profileRules = overrideMatchRules(profileRules, base.MatchTarget)
+	}
+	rules, err := appendRules(mappingValue(root, "rules"), profileRules)
 	if err != nil {
 		return nil, err
 	}
