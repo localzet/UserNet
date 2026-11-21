@@ -654,10 +654,11 @@ class ServiceStateMachineTest {
         assertSame(beforeRecreation.request, afterRecreation.request)
         assertTrue(afterRecreation.shouldDispatch)
 
-        machine.handleQuickAction(beforeRecreation.request)
-        assertEquals(0, host.setupCalls)
-
         machine.handleQuickAction(afterRecreation.request)
+        assertEquals(1, host.setupCalls)
+        assertEquals(1, host.startCalls)
+
+        machine.handleQuickAction(beforeRecreation.request)
 
         assertEquals(1, host.setupCalls)
         assertEquals(1, host.startCalls)
