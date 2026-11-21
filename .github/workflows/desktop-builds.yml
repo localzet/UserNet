@@ -74,11 +74,6 @@ jobs:
         with:
           go-version: '1.27.4'
           cache-dependency-path: core/go.sum
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
-      - name: Install pinned DMG packager
-        run: npm install --global --allow-scripts=fs-xattr,macos-alias create-dmg@8.1.0
       - run: flutter pub get
       - run: dart setup.dart macos --env stable --arch ${{ matrix.arch }}
       - name: Create checksums

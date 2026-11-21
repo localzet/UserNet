@@ -197,6 +197,22 @@ String createPackageTargets(String platform, String? customTargets) {
 String artifactName(String platform, String arch, String extension) =>
     '${platform == 'linux' ? linuxAppName : _appName}-$platform-$arch$extension';
 
+List<String> hdiutilDmgArguments({
+  required String volumeName,
+  required String sourcePath,
+  required String outputPath,
+}) => [
+  'create',
+  '-volname',
+  volumeName,
+  '-srcfolder',
+  sourcePath,
+  '-ov',
+  '-format',
+  'UDZO',
+  outputPath,
+];
+
 void _showHelp(ArgParser parser) {
   stderr.writeln('Usage: dart setup.dart [platform] [options]');
   stderr.writeln('Platform: current host platform (default) or android');
@@ -415,28 +431,21 @@ Future<void> _packageMacos(_Build build) async {
   );
   final staging = Directory(p.join(build.rootDir, 'build', 'dmg'));
   if (staging.existsSync()) staging.deleteSync(recursive: true);
-  staging.createSync(recursive: true);
-  // Without a signing identity create-dmg still writes an unsigned image.
-  final code = await build.run('create-dmg', [
-    '--overwrite',
-    '--dmg-title',
-    _appName,
-    app,
-    staging.path,
-  ]);
-  final created = staging
-      .listSync()
-      .whereType<File>()
-      .where((file) => file.path.endsWith('.dmg'))
-      .toList();
-  if (created.isEmpty) {
-    throw ProcessException('create-dmg', const [], 'no DMG was created', code);
-  }
-  if (code != 0) {
-    stderr.writeln('create-dmg exited with $code; the DMG is unsigned.');
-  }
+  final content = Directory(p.join(staging.path, 'contents'))
+    ..createSync(recursive: true);
+  await build.mustRun('ditto', [app, p.join(content.path, '$_appName.app')]);
+  Link(p.join(content.path, 'Applications')).createSync('/Applications');
+  final dmg = p.join(staging.path, '$_appName.dmg');
+  await build.mustRun(
+    'hdiutil',
+    hdiutilDmgArguments(
+      volumeName: _appName,
+      sourcePath: content.path,
+      outputPath: dmg,
+    ),
+  );
   build.copy(
-    created.first.path,
+    dmg,
     build.dist(artifactName('macos', build.arch, '.dmg')),
   );
   staging.deleteSync(recursive: true);
@@ -871,31 +880,12 @@ Future<bool> _hasCommand(String cmd) async {
 Future<int> _ensureDependencies(String platform, Set<String> targets) async {
   switch (platform) {
     case 'macos':
-      return _ensureMacosDependencies();
+      return 0;
     case 'linux':
       return _ensureLinuxDependencies(targets);
     default:
       return 0;
   }
-}
-
-Future<int> _ensureMacosDependencies() async {
-  if (await _hasCommand('create-dmg')) {
-    stdout.writeln('create-dmg already installed, skipping.');
-    return 0;
-  }
-  stdout.writeln('Installing create-dmg...');
-  // create-dmg's native helpers build on install, which npm blocks by default.
-  final result = await Process.run('npm', [
-    'install',
-    '-g',
-    '--allow-scripts=fs-xattr,macos-alias',
-    'create-dmg',
-  ]);
-  if (result.exitCode != 0) {
-    stderr.write(result.stderr);
-  }
-  return result.exitCode;
 }
 
 List<List<String>> linuxDependencyGroupsForTargets(Set<String> targets) => [
