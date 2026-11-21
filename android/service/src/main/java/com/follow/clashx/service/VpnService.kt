@@ -111,9 +111,11 @@ class VpnService : SystemVpnService(), ManagedService {
         }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Android starts always-on VPN through this callback instead of FlClash's bound-service
-        // path. Notify the app layer so it can restore Core and fully initialize the VPN service.
-        notifyVpnStartRequested()
+        // Start the foreground notification before restoring the VPN state.
+        startForegroundBeforeHandling(
+            startForeground = modules::start,
+            handleStart = { notifyVpnStartRequested() },
+        )
         return android.app.Service.START_STICKY
     }
 

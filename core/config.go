@@ -257,6 +257,7 @@ func loadSetupConfig(params *SetupParams) (*config.Config, error) {
 }
 
 func applyConfig(params *SetupParams) error {
+	pickRevisionsAtStart := pickRevisionSnapshot()
 	runtime.GC()
 	configMu.Lock()
 	defer configMu.Unlock()
@@ -281,10 +282,12 @@ func applyConfig(params *SetupParams) error {
 	// its pick, and again after, as ForceSet also drops what URLTest cached
 	// while its providers were still empty.
 	patchSelectGroup(cfg.Proxies, params.SelectedMap)
+	carried := carriedPicksSince(pickRevisionsAtStart)
 	currentConfig = cfg
 	hub.ApplyConfig(mihomoConfig(cfg))
 	afterApply(cfg)
 	patchSelectGroup(cfg.Proxies, params.SelectedMap)
+	holdPicks(cfg.Proxies, carried, params.SelectedMap)
 	bumpRouteEpoch()
 	updateListeners(cfg)
 	reconcileGeoUpdater()

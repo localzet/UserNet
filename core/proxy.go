@@ -91,11 +91,23 @@ func handleGetProxies() ProxiesData {
 		return p.Type(), true
 	})
 
+	return ProxiesData{All: names, Proxies: proxyViews(proxies, proxyView)}
+}
+
+func proxyViews(proxies map[string]constant.Proxy, render func(constant.Proxy) any) map[string]any {
+	selectMu.Lock()
+	defer selectMu.Unlock()
+
 	views := make(map[string]any, len(proxies))
 	for name, proxy := range proxies {
-		views[name] = proxyView(proxy)
+		view := render(proxy)
+		pick, held := heldPicks[name]
+		if group, ok := view.(map[string]any); ok && held && pick.group == proxy {
+			group["fixed"] = ""
+		}
+		views[name] = view
 	}
-	return ProxiesData{All: names, Proxies: views}
+	return views
 }
 
 // Proxy.MarshalJSON encodes each node twice, with history the host never reads.
@@ -173,6 +185,7 @@ func handleChangeProxy(params *ChangeProxyParams) *ChangeProxyResult {
 	} else if err := selector.Set(params.ProxyName); err != nil {
 		return &ChangeProxyResult{Message: err.Error()}
 	}
+	userPicked(params.GroupName)
 	changed := selector.Now() != before
 	refreshRouteLocked(routeUnchanged)
 	return &ChangeProxyResult{Changed: changed}

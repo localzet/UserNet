@@ -28,6 +28,12 @@ enum class RunState {
 
 internal typealias RunRequest = RunIntentArbiter.Token
 
+internal data class QuickActionReservation(
+    val request: RunRequest,
+    val action: QuickAction,
+    val shouldDispatch: Boolean,
+)
+
 internal const val MISSING_CONFIG_MESSAGE = "No configuration found."
 internal const val INVALID_CONFIG_MESSAGE = "Invalid configuration."
 internal const val VPN_PERMISSION_MESSAGE = "VPN permission required."
@@ -49,6 +55,7 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
     private val startPreparationLock = Mutex()
     private val mutableRunState = MutableStateFlow(RunState.STOPPED)
     private val arbiter = RunIntentArbiter()
+    private val initialRequest = arbiter.current()
     private val restartsRequested = AtomicLong()
     private var restartsServed = 0L
 
@@ -67,21 +74,84 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         get() = arbiter.isRunningRequested
 
     suspend fun handleToggleAction() {
-        if (isRunRequested) {
-            handleStopAction()
-        } else {
-            handleStartAction()
-        }
+        val reservation = reserveQuickAction(QuickAction.TOGGLE)
+        if (reservation.shouldDispatch) handleQuickAction(reservation.request)
     }
 
     suspend fun handleQuickAction(action: QuickAction) {
-        when (action) {
-            QuickAction.START -> if (!isRunRequested) startFromPreferences()
-            QuickAction.STOP -> handleStopAction()
-            QuickAction.TOGGLE ->
-                if (isRunRequested) handleStopAction() else startFromPreferences()
-        }
+        val reservation = reserveQuickAction(action)
+        if (reservation.shouldDispatch) handleQuickAction(reservation.request)
     }
+
+    /** Reserve the requested state before any permission UI or asynchronous work begins. */
+    @Synchronized
+    fun reserveQuickAction(action: QuickAction): QuickActionReservation {
+        val current = arbiter.current()
+        val running = when (action) {
+            QuickAction.START -> true
+            QuickAction.STOP -> false
+            QuickAction.TOGGLE -> !current.running
+        }
+        val resolvedAction = if (running) QuickAction.START else QuickAction.STOP
+        val alreadySettled = if (running) {
+            isStartedAs(sharedState.vpnOptions)
+        } else {
+            !current.running && runState.value == RunState.STOPPED && host.runtime == null
+        }
+        if (alreadySettled) {
+            return QuickActionReservation(current, resolvedAction, shouldDispatch = false)
+        }
+        if (running && current.running) {
+            return QuickActionReservation(current, resolvedAction, shouldDispatch = false)
+        }
+        if (!running && !current.running && runState.value == RunState.STOPPING) {
+            return QuickActionReservation(current, resolvedAction, shouldDispatch = false)
+        }
+        val request = createRequest(running)
+        return QuickActionReservation(request, resolvedAction, shouldDispatch = true)
+    }
+
+    /** Re-register a saved permission intent after Activity recreation or process restoration. */
+    @Synchronized
+    fun reregisterQuickAction(action: QuickAction): QuickActionReservation {
+        val running = action == QuickAction.START
+        val current = arbiter.current()
+        if (running) {
+            if (current.running) {
+                return QuickActionReservation(
+                    current,
+                    action,
+                    shouldDispatch = !isStartedAs(sharedState.vpnOptions),
+                )
+            }
+            if (arbiter.isCurrent(initialRequest)) {
+                return QuickActionReservation(createRequest(true), action, shouldDispatch = true)
+            }
+            return QuickActionReservation(current, action, shouldDispatch = false)
+        }
+        if (!current.running) {
+            return QuickActionReservation(current, action, shouldDispatch = false)
+        }
+        return QuickActionReservation(createRequest(false), action, shouldDispatch = true)
+    }
+
+    suspend fun handleQuickAction(request: RunRequest) {
+        if (!isCurrent(request)) return
+        if (request.running) {
+            if (!isStartedAs(sharedState.vpnOptions)) startFromPreferences(request)
+            return
+        }
+        host.showToast(sharedState.stopTip)
+        if (stop(request)) host.notifyStopped()
+    }
+
+    suspend fun cancelQuickAction(request: RunRequest) {
+        if (invalidateQuickAction(request)) reconcileStopped()
+    }
+
+    @Synchronized
+    fun invalidateQuickAction(request: RunRequest): Boolean =
+        resetToStopped(request).also { if (it) publish() }
 
     suspend fun awaitRunTime(): Long = transitionLock.withLock {
         host.runtime?.startedAtMillis?.takeIf { isRunRequested } ?: 0L
@@ -98,7 +168,7 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
             if (host.runtime != null) {
                 return@withLock false
             }
-            arbiter.resetToStopped(token).also { publish() }
+            resetToStopped(token).also { publish() }
         }
         if (dropped) {
             host.notifyStopped()
@@ -133,6 +203,7 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         handleStopAction()
     }
 
+    @Synchronized
     fun requestStart(): Deferred<Boolean> {
         if (isStartedAs(sharedState.vpnOptions)) {
             return CompletableDeferred(true)
@@ -141,12 +212,14 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         return host.scope.async { outcome.await() == StartOutcome.STARTED }
     }
 
+    @Synchronized
     fun requestStop(): Deferred<Boolean> {
         val request = createRequest(running = false)
         return host.scope.async { stop(request) }
     }
 
     // An owed restart outlives its request, so a start that overtakes it cannot adopt the old run.
+    @Synchronized
     fun requestRestart(): Deferred<Boolean> {
         restartsRequested.incrementAndGet()
         val outcome = launchStart(createRequest(running = true))
@@ -164,26 +237,45 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
 
     // The intent is claimed before the Core is set up, so a second action that lands meanwhile
     // toggles this start off instead of racing a second setup against it.
-    private suspend fun startFromPreferences() {
-        val request = createRequest(running = true)
-        sharedState = host.loadSharedState()
-        if (sharedState.setupParams == null || sharedState.vpnOptions == null) {
-            host.showToast(MISSING_CONFIG_MESSAGE)
+    private suspend fun startFromPreferences(request: RunRequest = createRequest(running = true)) {
+        val isPrepared = startPreparationLock.withLock {
+            if (!isCurrent(request)) return@withLock false
+            sharedState = host.loadSharedState()
+            if (sharedState.setupParams == null || sharedState.vpnOptions == null) {
+                host.showToast(MISSING_CONFIG_MESSAGE)
+                abandon(request)
+                return@withLock false
+            }
+            if (!setupCore()) {
+                abandon(request)
+                return@withLock false
+            }
+            true
+        }
+        if (!isPrepared) return
+        if (!isCurrent(request)) {
             abandon(request)
             return
         }
-        if (!setupCore()) {
-            abandon(request)
-        } else if (launchStart(request).await() == StartOutcome.FAILED) {
+        if (launchStart(request).await() == StartOutcome.FAILED) {
             host.showToast(START_FAILED_MESSAGE)
         }
     }
 
     private fun launchStart(request: RunRequest): Deferred<StartOutcome> {
+        if (!isCurrent(request)) {
+            return CompletableDeferred(StartOutcome.SUPERSEDED)
+        }
         val result = CompletableDeferred<StartOutcome>()
         val launch: (Boolean) -> Unit = { permitted ->
             host.scope.launch {
-                result.complete(if (permitted) start(request) else abandon(request))
+                result.complete(
+                    when {
+                        !isCurrent(request) -> StartOutcome.SUPERSEDED
+                        permitted -> start(request)
+                        else -> abandon(request)
+                    },
+                )
             }
         }
         val app = host.app()
@@ -246,7 +338,7 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
     }
 
     private suspend fun abandon(request: RunRequest): StartOutcome {
-        val dropped = arbiter.resetToStopped(request)
+        val dropped = resetToStopped(request)
         reconcileStopped()
         if (!dropped) {
             return StartOutcome.SUPERSEDED
@@ -384,10 +476,16 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         abandon()
     }
 
+    @Synchronized
     private fun createRequest(running: Boolean): RunRequest =
         arbiter.request(running).also { publish() }
 
+    @Synchronized
+    private fun resetToStopped(request: RunRequest): Boolean = arbiter.resetToStopped(request)
+
     private fun isCurrent(request: RunRequest): Boolean = arbiter.isCurrent(request)
+
+    internal fun isCurrentRequest(request: RunRequest): Boolean = isCurrent(request)
 
     internal companion object {
         val KERNEL_TCP_STACKS = setOf("system", "mixed")

@@ -11,6 +11,7 @@ import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.BinaryMessenger
@@ -48,6 +49,8 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private var physicalNetwork: Network? = null
     private val networkTransition = UserNetNetworkTransition<Network>()
     private var pendingNetworkRestart: Runnable? = null
+    private var pendingRelayRestart: Runnable? = null
+    private val relayRecoveryPolicy = UserNetRelayRecoveryPolicy()
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
             if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) ||
@@ -188,6 +191,8 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         pendingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingNetworkRestart = null
         if (!update.changed) return
+        pendingRelayRestart?.let(mainHandler::removeCallbacks)
+        pendingRelayRestart = null
         Log.i("UserNet", if (network == null) "network: unavailable" else "network: changed")
         val expectedGeneration = generation
         val request = synchronized(this) {
@@ -326,6 +331,7 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         serviceCredential: String? = null,
         workPlatform: String = "telemost",
         egressId: String = "auto",
+        preserveRecoveryBudget: Boolean = false,
     ) {
         require(platform in setOf("wbstream", "telemost", "vk")) { "Unsupported carrier: $platform" }
         require(workPlatform in setOf("wbstream", "telemost", "vk")) { "Unsupported work carrier: $workPlatform" }
@@ -335,6 +341,7 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         if (serviceMode) {
             require(!serviceCredential.isNullOrBlank()) { "serviceCredential is required" }
         }
+        if (!preserveRecoveryBudget) relayRecoveryPolicy.reset()
         stop(resetState = false)
         recoveryLaunch = Launch(platform, joinLink, socksPort, serviceUserId, serviceCredential, workPlatform, egressId)
         activeStage = if (serviceMode) "control" else "transport"
@@ -395,13 +402,17 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         writer = BufferedWriter(OutputStreamWriter(proc.outputStream))
         val currentGeneration = ++generation
         readerThread = Thread {
+            var readFailure: Throwable? = null
             runCatching {
                 proc.inputStream.bufferedReader().use { input ->
                     while (true) {
                         val line = input.readLine() ?: break
                         if (currentGeneration != generation) return@Thread
                         when {
-                            line == "STATUS:READY" -> sendJoin(platform, joinLink, currentGeneration)
+                            line == "STATUS:READY" -> {
+                                markRelayStable(currentGeneration)
+                                sendJoin(platform, joinLink, currentGeneration)
+                            }
                             line.startsWith("RESOLVE:") -> resolve(line.removePrefix("RESOLVE:"), currentGeneration)
                             line.startsWith("SERVICE_SESSION_READY:") -> {
                                 val session = JSONObject(line.removePrefix("SERVICE_SESSION_READY:"))
@@ -430,26 +441,133 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     }
                 }
             }.onFailure { error ->
-                // Closing the process interrupts this blocking pipe read on
-                // Android. That is a normal relay lifecycle transition.
-                if (currentGeneration == generation && process === proc) {
-                    Log.e("UserNet", "relay output failed", error)
-                    emit("status", "ERROR:RELAY_OUTPUT", currentGeneration)
-                }
+                readFailure = error
             }
-            if (currentGeneration == generation && !lastStatus.startsWith("ERROR:")) {
-                emit("status", "STOPPED", currentGeneration)
-            }
+            handleRelayExit(proc, currentGeneration, readFailure)
         }.also {
             it.name = "UserNet-relay-output"
             it.start()
         }
     }
 
+    private fun handleRelayExit(
+        exitedProcess: Process,
+        expectedGeneration: Long,
+        readFailure: Throwable?,
+    ) {
+        val isCurrent = synchronized(this) {
+            expectedGeneration == generation && process === exitedProcess
+        }
+        if (readFailure != null && isCurrent) {
+            Log.e("UserNet", "relay output failed", readFailure)
+        }
+
+        val shouldRetry = synchronized(this) {
+            shouldRetryUnexpectedRelayExit(
+                generationIsCurrent = expectedGeneration == generation,
+                processIsCurrent = process === exitedProcess,
+                recoveryRequested = recoveryLaunch != null,
+                terminalError = lastStatus.startsWith("ERROR:"),
+                physicalNetworkAvailable = physicalNetwork != null,
+                networkRestartPending = pendingNetworkRestart != null,
+            )
+        }
+        if (shouldRetry) {
+            if (exitedProcess.isAlive) exitedProcess.destroy()
+            scheduleRelayRestart(exitedProcess, expectedGeneration)
+            return
+        }
+
+        val waitingForNetwork = synchronized(this) {
+            expectedGeneration == generation && process === exitedProcess &&
+                    recoveryLaunch != null && !lastStatus.startsWith("ERROR:")
+        }
+        if (waitingForNetwork) {
+            emit("status", "RECONNECTING", expectedGeneration)
+        } else if (isCurrent && !lastStatus.startsWith("ERROR:")) {
+            emit("status", "STOPPED", expectedGeneration)
+        }
+    }
+
+    private fun scheduleRelayRestart(exitedProcess: Process, expectedGeneration: Long) {
+        var retryExhausted = false
+        synchronized(this) {
+            if (!shouldRetryUnexpectedRelayExit(
+                    generationIsCurrent = expectedGeneration == generation,
+                    processIsCurrent = process === exitedProcess,
+                    recoveryRequested = recoveryLaunch != null,
+                    terminalError = lastStatus.startsWith("ERROR:"),
+                    physicalNetworkAvailable = physicalNetwork != null,
+                    networkRestartPending = pendingNetworkRestart != null,
+                )
+            ) {
+                return
+            }
+
+            val request = recoveryLaunch ?: return
+            val network = physicalNetwork ?: return
+            val delayMillis = relayRecoveryPolicy.nextDelayMillis(SystemClock.elapsedRealtime())
+            if (delayMillis == null) {
+                retryExhausted = true
+            } else {
+                lateinit var restart: Runnable
+                restart = Runnable {
+                    Thread {
+                        runRelayRestartIfCurrent(
+                            lock = this,
+                            isCurrent = {
+                                shouldRunScheduledRelayRestart(
+                                    generationIsCurrent = expectedGeneration == generation,
+                                    processIsCurrent = process === exitedProcess,
+                                    recoveryRequested = recoveryLaunch === request,
+                                    restartIsCurrent = pendingRelayRestart === restart,
+                                    terminalError = lastStatus.startsWith("ERROR:"),
+                                    physicalNetworkAvailable = physicalNetwork != null,
+                                    networkIsCurrent = physicalNetwork == network,
+                                    networkRestartPending = pendingNetworkRestart != null,
+                                )
+                            },
+                            restart = {
+                                pendingRelayRestart = null
+                                runCatching {
+                                    start(
+                                        platform = request.platform,
+                                        joinLink = request.joinLink,
+                                        socksPort = request.socksPort,
+                                        serviceUserId = request.serviceUserId,
+                                        serviceCredential = request.serviceCredential,
+                                        workPlatform = request.workPlatform,
+                                        egressId = request.egressId,
+                                        preserveRecoveryBudget = true,
+                                    )
+                                }.onFailure { error ->
+                                    Log.e("UserNet", "relay restart failed", error)
+                                    emit("status", "ERROR:RELAY_RESTART", generation)
+                                }
+                            },
+                        )
+                    }.apply {
+                        name = "UserNet-relay-restart"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                pendingRelayRestart = restart
+                mainHandler.postDelayed(restart, delayMillis)
+            }
+        }
+
+        if (retryExhausted) {
+            emit("status", "ERROR:RELAY_EXIT", expectedGeneration)
+        } else {
+            emit("status", "RECONNECTING", expectedGeneration)
+        }
+    }
+
     private fun emit(method: String, value: String, expectedGeneration: Long? = null) {
         val emissionGeneration = synchronized(this) {
             if (expectedGeneration != null && expectedGeneration != generation) return
-            if (method == "status") updateStatus(value)
+            if (method == "status") updateStatus(value, generation)
             generation
         }
         mainHandler.post {
@@ -462,14 +580,20 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     @Synchronized
-    private fun updateStatus(value: String) {
+    private fun updateStatus(value: String, expectedGeneration: Long) {
         when {
-            value == "CONTROL_CONNECTED" -> controlState = "connected"
+            value == "CONTROL_CONNECTED" -> {
+                controlState = "connected"
+                markRelayStable(expectedGeneration)
+            }
             value == "WORK_SESSION_READY" -> {
                 controlState = "complete"
                 transportState = "connecting"
             }
-            value == "TUNNEL_CONNECTED" -> transportState = "connected"
+            value == "TUNNEL_CONNECTED" -> {
+                transportState = "connected"
+                markRelayStable(expectedGeneration)
+            }
             value == "TRANSPORT_VERIFYING" -> transportState = "connecting"
             value == "TUNNEL_LOST" || value == "RECONNECTING" || value == "CONNECTING" -> {
                 verificationTicket++
@@ -485,6 +609,20 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         lastStatus = value
         Log.i("UserNet", "status: $value")
+    }
+
+    private fun markRelayStable(expectedGeneration: Long) {
+        synchronized(this) {
+            if (!markRelayReadyIfCurrent(
+                    relayRecoveryPolicy,
+                    expectedGeneration,
+                    generation,
+                    SystemClock.elapsedRealtime(),
+                )
+            ) return
+            pendingRelayRestart?.let(mainHandler::removeCallbacks)
+            pendingRelayRestart = null
+        }
     }
 
     private fun verifyTransport(port: Int, expectedGeneration: Long) {
@@ -584,8 +722,11 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         generation++
         pendingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingNetworkRestart = null
+        pendingRelayRestart?.let(mainHandler::removeCallbacks)
+        pendingRelayRestart = null
         if (resetState) {
             recoveryLaunch = null
+            relayRecoveryPolicy.reset()
             controlState = "idle"
             transportState = "idle"
             controlCarrier = ""
@@ -617,6 +758,8 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun releaseNetworkObserver() {
         pendingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingNetworkRestart = null
+        pendingRelayRestart?.let(mainHandler::removeCallbacks)
+        pendingRelayRestart = null
         networkManager?.let { manager ->
             runCatching { manager.unregisterNetworkCallback(networkCallback) }
                 .onFailure { Log.w("UserNet", "network observer release failed") }

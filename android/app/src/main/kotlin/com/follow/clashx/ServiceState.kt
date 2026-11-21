@@ -23,6 +23,20 @@ object ServiceState {
 
     suspend fun handleQuickAction(action: QuickAction) = machine.handleQuickAction(action)
 
+    internal fun reserveQuickAction(action: QuickAction) = machine.reserveQuickAction(action)
+
+    internal fun reregisterQuickAction(action: QuickAction) = machine.reregisterQuickAction(action)
+
+    internal suspend fun handleQuickAction(request: RunRequest) = machine.handleQuickAction(request)
+
+    internal suspend fun cancelQuickAction(request: RunRequest) = machine.cancelQuickAction(request)
+
+    internal fun invalidateQuickAction(request: RunRequest): Boolean =
+        machine.invalidateQuickAction(request)
+
+    internal fun isCurrentQuickAction(request: RunRequest): Boolean =
+        machine.isCurrentRequest(request)
+
     suspend fun handleStartAction() = machine.handleStartAction()
 
     suspend fun handleStopAction() = machine.handleStopAction()
