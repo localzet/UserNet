@@ -82,14 +82,27 @@ void main() {
     );
   });
 
-  test('cold quick actions open the app for missing setup or consent', () {
+  test('cold quick actions require setup and permissions before starting', () {
     final action = File(
       'android/app/src/main/kotlin/com/follow/clashx/QuickActionActivity.kt',
     ).readAsStringSync();
-    expect(action, contains('needsInteractiveSetup(action)'));
+    expect(
+      action,
+      contains('reservation.action == QuickAction.START && needsConfiguration()'),
+    );
+    expect(
+      action,
+      contains('state.setupParams == null || state.vpnOptions == null'),
+    );
+    expect(
+      action,
+      contains('requestRequiredPermissions(reservation, Intent(intent))'),
+    );
     expect(action, contains('VpnService.prepare(this)'));
     expect(action, contains('POST_NOTIFICATIONS'));
+    expect(action, contains('ServiceState.invalidateQuickAction(reservation.request)'));
     expect(action, contains('withContext(Dispatchers.Main.immediate)'));
+    expect(action, contains('withTimeoutOrNull(HOLD_TIMEOUT_MILLIS)'));
     expect(action, isNot(contains('handle(intent)\n        finish()')));
   });
 
@@ -108,7 +121,7 @@ void main() {
     final authorizationCheck = activity.indexOf(
       'QuickActionIntentAuthorization.isAuthorized(this, intent)',
     );
-    final dispatch = activity.indexOf('ServiceState.handleQuickAction(action)');
+    final dispatch = activity.indexOf('ServiceState.handleQuickAction(request)');
     expect(authorizationCheck, greaterThanOrEqualTo(0));
     expect(dispatch, greaterThan(authorizationCheck));
     expect(
