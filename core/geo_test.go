@@ -3,6 +3,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,6 +11,19 @@ import (
 	"testing"
 	"time"
 )
+
+func maxMindTestDatabase(t *testing.T) []byte {
+	t.Helper()
+	var data bytes.Buffer
+	data.Write([]byte{0, 0, 1, 0, 0, 1})
+	data.Write(make([]byte, 16))
+	data.WriteString("\xab\xcd\xefMaxMind.com")
+	data.WriteByte(0xE3)
+	data.WriteString("\x4anode_count\xc1\x01")
+	data.WriteString("\x4brecord_size\xa1\x18")
+	data.WriteString("\x4aip_version\xa1\x04")
+	return data.Bytes()
+}
 
 func geoStatuses(t *testing.T, run func()) []GeoUpdateStatus {
 	t.Helper()
@@ -113,5 +127,40 @@ func TestManualGeoUpdateReportsTheError(t *testing.T) {
 	statuses := manualGeoUpdate(t)
 	if len(statuses) != 2 || statuses[1].Error != "offline" || statuses[1].Skipped {
 		t.Fatalf("statuses = %+v, want the error reported", statuses)
+	}
+}
+
+func TestMappedMaxMindUpdateWaitsForTheNextCoreStart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "GeoIP.mmdb")
+	old := []byte("old database")
+	if err := os.WriteFile(path, old, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	previous := stagesMappedFile
+	stagesMappedFile = true
+	t.Cleanup(func() { stagesMappedFile = previous })
+	data := maxMindTestDatabase(t)
+	if err := installMaxMindDatabase(path, data); err != nil {
+		t.Fatalf("installMaxMindDatabase = %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, old) {
+		t.Fatalf("active database changed before restart: err=%v", err)
+	}
+	if got, err := os.ReadFile(pendingGeoPath(path)); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("pending database = %v, err=%v", got, err)
+	}
+	if geoFileInUse(path) != pendingGeoPath(path) {
+		t.Fatal("pending database is not used for update comparisons")
+	}
+
+	if err := installPendingGeoFile(path); err != nil {
+		t.Fatalf("installPendingGeoFile = %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("restarted database = %v, err=%v", got, err)
+	}
+	if fileExists(pendingGeoPath(path)) {
+		t.Fatal("pending database remained after installation")
 	}
 }

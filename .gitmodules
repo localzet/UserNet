@@ -1,0 +1,4 @@
+[submodule "vconnect"]
+	path = vconnect
+	url = https://github.com/localzet/vconnect.git
+	shallow = true

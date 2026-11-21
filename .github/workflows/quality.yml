@@ -38,6 +38,11 @@ jobs:
           cache-dependency-path: core/go.sum
       - run: go test ./...
         working-directory: core
+      - name: Test Go core without CGO
+        env:
+          CGO_ENABLED: 0
+        run: go test ./...
+        working-directory: core
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
         working-directory: core
 
@@ -70,10 +75,15 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          submodules: recursive
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: '17'
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: vconnect/relay/go.sum
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: 'ndk;28.2.13676358'
@@ -108,10 +118,19 @@ jobs:
 
           echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - run: flutter pub get
-      - run: gradle -p android --no-daemon :common:testDebugUnitTest :app:compileDebugKotlin
+      - name: Test Android call relay
+        working-directory: vconnect/relay
+        run: go test ./...
+      - run: gradle -p android --no-daemon :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest :app:compileDebugKotlin
+      - name: Build Android call relay
+        run: bash scripts/build-usernet-relay.sh
       - name: Build Android debug APK for device validation
         run: flutter build apk --debug --target-platform android-arm64
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Verify Android debug APK includes the call relay
+        run: unzip -Z1 build/app/outputs/flutter-apk/app-debug.apk | grep -Fx 'lib/arm64-v8a/libusernetrelay.so'
+      - if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: usernet-android-debug-apk

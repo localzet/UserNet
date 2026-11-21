@@ -37,14 +37,16 @@ Android, Windows, macOS и Linux. Актуальные файлы, систем�
 
 ## Сборка из исходников
 
-Для воспроизводимой сборки используйте Flutter 3.47.6 (с входящим в него Dart), Go 1.27.3, Rust stable и инструменты целевой платформы. Для Android нужны Android SDK и NDK; для macOS — Xcode; Linux и Windows требуют системные пакеты и SDK соответствующей ОС.
+Для воспроизводимой сборки используйте Flutter 3.47.6 (с входящим в него Dart), Go 1.27.4, Rust stable и инструменты целевой платформы. Для Android нужны Android SDK и NDK; для macOS — Xcode; Linux и Windows требуют системные пакеты и SDK соответствующей ОС.
 
 ```bash
-git clone https://github.com/localzet/UserNet.git
+git clone --recurse-submodules https://github.com/localzet/UserNet.git
 cd UserNet
 flutter pub get
 dart setup.dart android   # или windows, macos, linux
 ```
+
+Если репозиторий уже клонирован без подмодулей, перед сборкой Android выполните `git submodule update --init --recursive`. Подмодуль содержит исходники call relay, закреплённые на конкретном commit.
 
 Для локальной проверки:
 
