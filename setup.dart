@@ -444,10 +444,7 @@ Future<void> _packageMacos(_Build build) async {
       outputPath: dmg,
     ),
   );
-  build.copy(
-    dmg,
-    build.dist(artifactName('macos', build.arch, '.dmg')),
-  );
+  build.copy(dmg, build.dist(artifactName('macos', build.arch, '.dmg')));
   staging.deleteSync(recursive: true);
 }
 
