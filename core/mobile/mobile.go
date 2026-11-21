@@ -7,6 +7,9 @@ package mobile
 
 import "core"
 
+// Touch preloads the gomobile library before the first Core request.
+func Touch() {}
+
 type ResultHandler interface {
 	OnResult(data []byte) error
 }

@@ -1,5 +1,6 @@
 package com.follow.clashx.plugins
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -141,5 +142,32 @@ class UserNetNetworkTransitionTest {
                 transportState = "connected",
             ),
         )
+    }
+
+    @Test
+    fun `active relay keeps observer after engine detaches for recovery and DNS`() {
+        val keepObserver = shouldKeepNetworkObserver(engineCount = 0, recoveryRequested = true)
+        assertTrue(keepObserver)
+
+        val transition = UserNetNetworkTransition<String>()
+        transition.update("wifi", recoveryRequested = true, relayReady = true)
+        val handover = transition.update(
+            "cellular",
+            recoveryRequested = true,
+            relayReady = true,
+        )
+        assertTrue(handover.shouldRestart)
+
+        val addresses = resolveOnPhysicalNetwork(
+            selectNetwork = { if (keepObserver) "cellular" else null },
+            lookup = { listOf("resolved on $it") },
+        )
+        assertEquals(listOf("resolved on cellular"), addresses)
+    }
+
+    @Test
+    fun `idle plugin releases observer after last engine detaches`() {
+        assertFalse(shouldKeepNetworkObserver(engineCount = 0, recoveryRequested = false))
+        assertTrue(shouldKeepNetworkObserver(engineCount = 1, recoveryRequested = false))
     }
 }

@@ -139,13 +139,8 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     @Synchronized
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channels.remove(binding.binaryMessenger)?.setMethodCallHandler(null)
-        if (channels.isEmpty()) {
-            networkManager?.unregisterNetworkCallback(networkCallback)
-            networkManager = null
-            physicalNetwork = null
-            networkTransition.reset()
-            pendingNetworkRestart?.let(mainHandler::removeCallbacks)
-            pendingNetworkRestart = null
+        if (!shouldKeepNetworkObserver(channels.size, recoveryLaunch != null)) {
+            releaseNetworkObserver()
         }
     }
 
@@ -340,7 +335,7 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         if (serviceMode) {
             require(!serviceCredential.isNullOrBlank()) { "serviceCredential is required" }
         }
-        stop()
+        stop(resetState = false)
         recoveryLaunch = Launch(platform, joinLink, socksPort, serviceUserId, serviceCredential, workPlatform, egressId)
         activeStage = if (serviceMode) "control" else "transport"
         controlState = if (serviceMode) "connecting" else "idle"
@@ -614,5 +609,20 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         process = null
         readerThread?.interrupt()
         readerThread = null
+        if (!shouldKeepNetworkObserver(channels.size, recoveryLaunch != null)) {
+            releaseNetworkObserver()
+        }
+    }
+
+    private fun releaseNetworkObserver() {
+        pendingNetworkRestart?.let(mainHandler::removeCallbacks)
+        pendingNetworkRestart = null
+        networkManager?.let { manager ->
+            runCatching { manager.unregisterNetworkCallback(networkCallback) }
+                .onFailure { Log.w("UserNet", "network observer release failed") }
+        }
+        networkManager = null
+        physicalNetwork = null
+        networkTransition.reset()
     }
 }

@@ -196,6 +196,16 @@ func TestShareLinksReadBackThroughTheConverter(t *testing.T) {
 		},
 		{
 			proxy: map[string]any{
+				"name": "socks reserved", "type": "socks5", "server": "i.example", "port": 1080,
+				"username": "user@x", "password": "p%ss",
+			},
+			prefix: "socks5://",
+			want: map[string]string{
+				"name": "socks reserved", "type": "socks5", "username": "user@x", "password": "p%ss",
+			},
+		},
+		{
+			proxy: map[string]any{
 				"name": "https", "type": "http", "server": "j.example", "port": 443,
 				"username": "test", "tls": true,
 			},
@@ -282,5 +292,17 @@ func TestDecodeShareLinksAnswersEveryLine(t *testing.T) {
 	}
 	if results[0][0]["name"] != "one" || results[2][0]["name"] != "two" {
 		t.Errorf("names = %v, %v", results[0][0]["name"], results[2][0]["name"])
+	}
+}
+
+func TestDecodeShareLinksUnescapesHysteria2Password(t *testing.T) {
+	results := handleDecodeShareLinks([]string{
+		"hysteria2://p%40ss%25word@a.example:443#hy2",
+	})
+	if len(results) != 1 || len(results[0]) != 1 {
+		t.Fatalf("results = %v", results)
+	}
+	if got := results[0][0]["password"]; got != "p@ss%word" {
+		t.Errorf("password = %#v, want decoded value", got)
 	}
 }

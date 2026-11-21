@@ -59,3 +59,8 @@ internal fun isUserNetRelayReady(
         else -> transportState == "connected"
     }
 }
+
+internal fun shouldKeepNetworkObserver(
+    engineCount: Int,
+    recoveryRequested: Boolean,
+): Boolean = engineCount > 0 || recoveryRequested

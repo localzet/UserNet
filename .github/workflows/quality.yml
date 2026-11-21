@@ -38,6 +38,11 @@ jobs:
           cache-dependency-path: core/go.sum
       - run: go test ./...
         working-directory: core
+      - name: Test Go core without CGO
+        env:
+          CGO_ENABLED: 0
+        run: go test ./...
+        working-directory: core
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
         working-directory: core
 
