@@ -88,7 +88,9 @@ void main() {
     ).readAsStringSync();
     expect(
       action,
-      contains('reservation.action == QuickAction.START && needsConfiguration()'),
+      contains(
+        'reservation.action == QuickAction.START && needsConfiguration()',
+      ),
     );
     expect(
       action,
@@ -100,7 +102,10 @@ void main() {
     );
     expect(action, contains('VpnService.prepare(this)'));
     expect(action, contains('POST_NOTIFICATIONS'));
-    expect(action, contains('ServiceState.invalidateQuickAction(reservation.request)'));
+    expect(
+      action,
+      contains('ServiceState.invalidateQuickAction(reservation.request)'),
+    );
     expect(action, contains('withContext(Dispatchers.Main.immediate)'));
     expect(action, contains('withTimeoutOrNull(HOLD_TIMEOUT_MILLIS)'));
     expect(action, isNot(contains('handle(intent)\n        finish()')));
@@ -121,7 +126,9 @@ void main() {
     final authorizationCheck = activity.indexOf(
       'QuickActionIntentAuthorization.isAuthorized(this, intent)',
     );
-    final dispatch = activity.indexOf('ServiceState.handleQuickAction(request)');
+    final dispatch = activity.indexOf(
+      'ServiceState.handleQuickAction(request)',
+    );
     expect(authorizationCheck, greaterThanOrEqualTo(0));
     expect(dispatch, greaterThan(authorizationCheck));
     expect(
