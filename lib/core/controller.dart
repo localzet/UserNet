@@ -69,8 +69,9 @@ class CoreController {
           continue;
         }
         final asset = 'assets/data/$geoFileName';
-        if (system.isAndroid && app != null) {
-          await app.extractAsset(asset, geoFile.path);
+        final platformApp = app;
+        if (system.isAndroid && platformApp != null) {
+          await platformApp.extractAsset(asset, geoFile.path);
           continue;
         }
         final data = await rootBundle.load(asset);
