@@ -46,7 +46,7 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private var recoveryLaunch: Launch? = null
     private var networkManager: ConnectivityManager? = null
     private var physicalNetwork: Network? = null
-    private var observedNetwork = false
+    private val networkTransition = UserNetNetworkTransition<Network>()
     private var pendingNetworkRestart: Runnable? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
@@ -143,7 +143,7 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             networkManager?.unregisterNetworkCallback(networkCallback)
             networkManager = null
             physicalNetwork = null
-            observedNetwork = false
+            networkTransition.reset()
             pendingNetworkRestart?.let(mainHandler::removeCallbacks)
             pendingNetworkRestart = null
         }
@@ -186,24 +186,29 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     @Synchronized
     private fun handlePhysicalNetwork(network: Network?) {
         if (physicalNetwork == network) return
-        val changed = observedNetwork
+        val recoveryRequested = recoveryLaunch != null
+        val relayReady = isRelayReadyForNetworkChange()
+        val update = networkTransition.update(network, recoveryRequested, relayReady)
         physicalNetwork = network
-        observedNetwork = true
         pendingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingNetworkRestart = null
-        if (!changed) return
+        if (!update.changed) return
         Log.i("UserNet", if (network == null) "network: unavailable" else "network: changed")
         val expectedGeneration = generation
         val request = synchronized(this) {
-            if (process?.isAlive != true) return
             recoveryLaunch ?: return
         }
+        if (!update.shouldAnnounceReconnect) return
         emit("status", "RECONNECTING", expectedGeneration)
-        if (network == null) return
+        if (!update.shouldRestart) return
         val restart = Runnable {
             Thread {
                 synchronized(this) {
-                    if (generation != expectedGeneration || process?.isAlive != true) return@Thread
+                    if (generation != expectedGeneration || recoveryLaunch != request ||
+                        !networkTransition.isCurrent(update.revision, network) ||
+                        selectPhysicalNetwork() != network) {
+                        return@Thread
+                    }
                     stop(resetState = false)
                     emit("status", "RECONNECTING")
                     runCatching {
@@ -216,6 +221,14 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         pendingNetworkRestart = restart
         mainHandler.postDelayed(restart, 750)
     }
+
+    @Synchronized
+    private fun isRelayReadyForNetworkChange(): Boolean = isUserNetRelayReady(
+        processRunning = process?.isAlive == true,
+        activeStage = activeStage,
+        controlState = controlState,
+        transportState = transportState,
+    )
 
     private fun probe(result: MethodChannel.Result) {
         Thread {
