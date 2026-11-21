@@ -146,3 +146,4 @@ jobs:
         with:
           persist-credentials: false
       - run: bash tool/hooks/test.sh
+      - run: bash test/tool/release_branch_guard_test.sh
