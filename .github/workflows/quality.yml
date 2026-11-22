@@ -180,8 +180,14 @@ jobs:
 
   shell-hooks:
     name: Shell hook tests
+    needs: [release-signer]
+    if: always()
     runs-on: ubuntu-24.04
     steps:
+      - name: Require release signer checks
+        env:
+          SIGNER_RESULT: ${{ needs.release-signer.result }}
+        run: test "$SIGNER_RESULT" = success
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
