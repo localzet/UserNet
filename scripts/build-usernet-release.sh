@@ -19,7 +19,8 @@ if [[ ! -s "$password_file" || ! -s "$keystore_file" ]]; then
 fi
 
 export USERNET_KEYSTORE_FILE="$keystore_file"
-export USERNET_SIGNING_PASSWORD="$(<"$password_file")"
+USERNET_SIGNING_PASSWORD="$(<"$password_file")"
+export USERNET_SIGNING_PASSWORD
 export USERNET_SIGNING_ALIAS=usernet
 export USERNET_KEYSTORE_TYPE=PKCS12
 
@@ -50,7 +51,12 @@ output="$output_dir/usernet-$release_channel-${version//+/-}.apk"
 cp "$repo_dir/build/app/outputs/flutter-apk/app-release.apk" "$output"
 
 apksigner_bin="${USERNET_APKSIGNER_BIN:-$HOME/Android/Sdk/build-tools/36.0.0/apksigner}"
-"$apksigner_bin" verify --verbose "$output" >/dev/null
+if [[ "$release_channel" == stable ]]; then
+  python3 "$repo_dir/scripts/verify_usernet_apk.py" \
+    --apksigner "$apksigner_bin" "$output"
+else
+  "$apksigner_bin" verify --verbose "$output" >/dev/null
+fi
 
 if [[ "$release_channel" == stable ]]; then
   aapt_bin="${USERNET_AAPT_BIN:-$HOME/Android/Sdk/build-tools/36.0.0/aapt}"

@@ -149,3 +149,5 @@ jobs:
       - run: bash test/tool/release_branch_guard_test.sh
       - name: Test OTA bundle validation and publication
         run: python3 -m unittest discover -s test -p 'test_usernet_ota.py' -v
+      - name: Test stable APK signer verification
+        run: python3 -m unittest discover -s test -p 'test_usernet_signing.py' -v
