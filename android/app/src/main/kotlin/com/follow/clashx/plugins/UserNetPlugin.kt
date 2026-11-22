@@ -17,6 +17,7 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMethodCodec
 import com.follow.clashx.common.Components
 import org.json.JSONObject
 import java.io.BufferedWriter
@@ -32,8 +33,24 @@ import java.util.concurrent.TimeUnit
 import java.util.IdentityHashMap
 import java.util.UUID
 
+private const val USERNET_CHANNEL = "${Components.PACKAGE_NAME}/usernet_transport"
+
+internal fun createUserNetMethodChannel(
+    messenger: BinaryMessenger,
+    handler: MethodChannel.MethodCallHandler,
+): MethodChannel {
+    val taskQueue = messenger.makeBackgroundTaskQueue(
+        BinaryMessenger.TaskQueueOptions().setIsSerial(true),
+    )
+    return MethodChannel(
+        messenger,
+        USERNET_CHANNEL,
+        StandardMethodCodec.INSTANCE,
+        taskQueue,
+    ).also { it.setMethodCallHandler(handler) }
+}
+
 data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
-    private const val CHANNEL = "${Components.PACKAGE_NAME}/usernet_transport"
     private val channels = IdentityHashMap<BinaryMessenger, MethodChannel>()
     private var context: Context? = null
     private var process: Process? = null
@@ -105,9 +122,10 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 manager.registerNetworkCallback(request, networkCallback)
             }
         }
-        channels[binding.binaryMessenger] = MethodChannel(binding.binaryMessenger, CHANNEL).also {
-            it.setMethodCallHandler(this)
-        }
+        channels[binding.binaryMessenger] = createUserNetMethodChannel(
+            binding.binaryMessenger,
+            this,
+        )
     }
 
     private fun selectPhysicalNetwork(excluded: Network? = null): Network? {
