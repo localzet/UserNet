@@ -123,6 +123,27 @@ hooks:
       );
     });
 
+    test('builds a compressed DMG without mounting the image', () {
+      expect(
+        setup.hdiutilDmgArguments(
+          volumeName: 'UserNet',
+          sourcePath: '/tmp/dmg-content',
+          outputPath: '/tmp/UserNet.dmg',
+        ),
+        [
+          'create',
+          '-volname',
+          'UserNet',
+          '-srcfolder',
+          '/tmp/dmg-content',
+          '-ov',
+          '-format',
+          'UDZO',
+          '/tmp/UserNet.dmg',
+        ],
+      );
+    });
+
     test('Windows package points to the UserNet executable', () {
       final cmake = File('windows/CMakeLists.txt').readAsStringSync();
       final config = File(

@@ -57,6 +57,13 @@ class App {
   Future<String?> installApk(String path) =>
       methodChannel.invokeMethod<String>('installApk', {'path': path});
 
+  Future<void> extractAsset(String asset, String path) async {
+    await methodChannel.invokeMethod<bool>('extractAsset', {
+      'asset': asset,
+      'path': path,
+    });
+  }
+
   Future<List<Package>> getPackages() async {
     final packagesString = await methodChannel.invokeMethod<String>(
       'getPackages',

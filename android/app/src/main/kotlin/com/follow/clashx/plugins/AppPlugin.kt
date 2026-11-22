@@ -47,12 +47,13 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry
+import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.io.File
 
 class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
 
@@ -67,6 +68,8 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         PluginRegistry.RequestPermissionsResultListener(::onRequestPermissionsResultListener)
 
     private lateinit var channel: MethodChannel
+
+    private lateinit var flutterAssets: FlutterPlugin.FlutterAssets
 
     private lateinit var scope: CoroutineScope
 
@@ -158,6 +161,14 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         when (call.method) {
             "installApk" -> installApk(call.argument<String>("path"), result)
 
+            "extractAsset" -> reply(result) {
+                extractAsset(
+                    requireNotNull(call.argument<String>("asset")),
+                    requireNotNull(call.argument<String>("path")),
+                )
+                true
+            }
+
             "moveTaskToBack" -> {
                 activity?.moveTaskToBack(true)
                 result.success(true)
@@ -237,6 +248,26 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
     private fun handleGetPackageIcon(call: MethodCall, result: Result) = reply(result) {
         val packageName = call.argument<String>("packageName") ?: ""
         GlobalState.application.packageManager.getPackageIconPath(packageName)
+    }
+
+    private fun extractAsset(asset: String, path: String) {
+        val root = GlobalState.application.filesDir.canonicalFile
+        val target = File(path).canonicalFile
+        require(target.parentFile == root) { "Asset destination must be in app data" }
+
+        val partial = File(root, "${target.name}.part")
+        val assetKey = flutterAssets.getAssetFilePathByName(asset)
+        try {
+            GlobalState.application.assets.open(assetKey).use { input ->
+                partial.outputStream().use { output -> input.copyTo(output, 1 shl 16) }
+            }
+            if (!partial.renameTo(target)) {
+                throw IOException("Unable to move bundled asset")
+            }
+        } catch (error: Exception) {
+            partial.delete()
+            throw error
+        }
     }
 
     private fun installApk(path: String?, result: Result) {
@@ -505,6 +536,7 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        flutterAssets = flutterPluginBinding.flutterAssets
         channel =
             MethodChannel(flutterPluginBinding.binaryMessenger, "${Components.PACKAGE_NAME}/app")
         channel.setMethodCallHandler(this)

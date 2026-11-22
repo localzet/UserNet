@@ -1,9 +1,12 @@
 package core
 
 import (
+	"maps"
 	"reflect"
+	"slices"
 	"sync"
 
+	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/constant"
 	cp "github.com/metacubex/mihomo/constant/provider"
 	"github.com/metacubex/mihomo/tunnel"
@@ -21,7 +24,18 @@ var proxyCache struct {
 	versions  map[string]uint32
 }
 
+var tunnelStateMu sync.RWMutex
+
+func withTunnelStateWrite(update func()) {
+	tunnelStateMu.Lock()
+	defer tunnelStateMu.Unlock()
+	update()
+}
+
 func allProxies() map[string]constant.Proxy {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
+
 	base := tunnel.Proxies()
 	providers := tunnel.Providers()
 	proxyCache.Lock()
@@ -37,7 +51,8 @@ func allProxies() map[string]constant.Proxy {
 		rebuilt[name] = proxy
 	}
 	versions := make(map[string]uint32, len(providers))
-	for name, p := range providers {
+	for _, name := range providerOrder(providers) {
+		p := providers[name]
 		// Version before proxies: the other order can stamp a version newer
 		// than the list that was read, and the cache never recovers.
 		versions[name] = p.Version()
@@ -50,6 +65,15 @@ func allProxies() map[string]constant.Proxy {
 	proxyCache.providers = mapIdentity(providers)
 	proxyCache.versions = versions
 	return rebuilt
+}
+
+func providerOrder(providers map[string]cp.ProxyProvider) []string {
+	names := slices.Sorted(maps.Keys(providers))
+	// Let later providers consistently override same-named proxy entries.
+	if index := slices.Index(names, provider.ReservedName); index > 0 {
+		names = slices.Concat([]string{provider.ReservedName}, slices.Delete(names, index, index+1))
+	}
+	return names
 }
 
 func mapIdentity(m any) uintptr {
@@ -84,9 +108,25 @@ func invalidateAllProxies() {
 }
 
 func providersSnapshot() map[string]cp.ProxyProvider {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
 	return tunnel.Providers()
 }
 
 func ruleProvidersSnapshot() map[string]cp.RuleProvider {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
 	return tunnel.RuleProviders()
+}
+
+func proxiesSnapshot() map[string]constant.Proxy {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
+	return tunnel.Proxies()
+}
+
+func providerTablesSnapshot() (map[string]cp.ProxyProvider, map[string]cp.RuleProvider) {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
+	return tunnel.Providers(), tunnel.RuleProviders()
 }

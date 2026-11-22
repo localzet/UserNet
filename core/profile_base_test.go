@@ -137,12 +137,12 @@ func TestHandleGetProfileBaseReadsTheOverrideOnlyFromGlobal(t *testing.T) {
 	}
 }
 
-func TestPresentKeysNamesTheTunKeysAndSkipsMergeKeys(t *testing.T) {
+func TestPresentKeysNamesTheTunKeysAndIncludesMergedKeys(t *testing.T) {
 	profile := "x: &x {allow-lan: true}\n<<: *x\nmixed-port: 1\ntun:\n  enable: true\n  stack: system\n"
 
 	got := presentKeys([]byte(profile))
 
-	want := []string{"x", "mixed-port", "tun", "tun.enable", "tun.stack"}
+	want := []string{"x", "mixed-port", "tun", "allow-lan", "tun.enable", "tun.stack"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("present = %v, want %v", got, want)
 	}
@@ -233,6 +233,32 @@ func TestLoadConfigWithBasePutsTheAddedRulesFirstAndTheOverlayOverTheRest(t *tes
 	}
 	if len(cfg.SubRules["sub"]) != 1 {
 		t.Errorf("sub-rules = %v, want the profile's", cfg.SubRules)
+	}
+}
+
+func TestLoadConfigWithBaseOverridesProfileMatchRules(t *testing.T) {
+	path := writeBaseProfile(t, baseProfile)
+	base, err := handleGetProfileBase(path)
+	if err != nil {
+		t.Fatalf("handleGetProfileBase = %v", err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfg, err := loadConfigWithBase(&SetupBase{
+		Path:        path,
+		Overlay:     overlayOf(t, base, nil, nil),
+		MatchTarget: "g",
+	}, configPath)
+	if err != nil {
+		t.Fatalf("loadConfigWithBase = %v", err)
+	}
+
+	want := []string{
+		"DomainSuffix,example.com,g",
+		"Match,,g",
+		"Match,,g",
+	}
+	if got := ruleStrings(cfg); !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want %v", got, want)
 	}
 }
 
@@ -435,7 +461,7 @@ func TestEncodeConfigMappingKeepsEveryKeyAfterAnOpenEndedScalar(t *testing.T) {
 	mapping.Content = append(note, mapping.Content...)
 	var out bytes.Buffer
 
-	if err := encodeConfigMapping(&out, &mapping); err != nil {
+	if err := encodeConfigMapping(&out, &mapping, nil); err != nil {
 		t.Fatalf("encodeConfigMapping = %v", err)
 	}
 
@@ -451,5 +477,36 @@ func TestEncodeConfigMappingKeepsEveryKeyAfterAnOpenEndedScalar(t *testing.T) {
 	}
 	if !reflect.DeepEqual(decoded.Rules, rules) {
 		t.Errorf("decoded %d rules, want all %d in order", len(decoded.Rules), len(rules))
+	}
+}
+
+func TestEncodeConfigMappingPreservesLongRulesReusedByAnAlias(t *testing.T) {
+	var source strings.Builder
+	source.WriteString("rules: &shared\n")
+	for i := 0; i <= encodeSliceLength; i++ {
+		fmt.Fprintf(&source, "  - DOMAIN,%d.test,DIRECT\n", i)
+	}
+	source.WriteString("sub-rules:\n  common: *shared\n")
+
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(source.String()), &document); err != nil {
+		t.Fatalf("decode aliased rules: %v", err)
+	}
+	shared := inlineAliases(&document)
+	var output bytes.Buffer
+	if err := encodeConfigMapping(&output, document.Content[0], shared); err != nil {
+		t.Fatalf("encodeConfigMapping = %v", err)
+	}
+
+	var decoded struct {
+		Rules    []string            `yaml:"rules"`
+		SubRules map[string][]string `yaml:"sub-rules"`
+	}
+	if err := yaml.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if len(decoded.Rules) != encodeSliceLength+1 || len(decoded.SubRules["common"]) != encodeSliceLength+1 {
+		t.Fatalf("decoded list lengths = rules %d, sub-rules %d; want %d each",
+			len(decoded.Rules), len(decoded.SubRules["common"]), encodeSliceLength+1)
 	}
 }

@@ -4,7 +4,49 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestRetagShortIDsCopiesSharedAliasValues(t *testing.T) {
+	profile := `mixed-port: &port 7890
+proxies:
+  - name: port-alias
+    type: vless
+    reality-opts: {public-key: k, short-id: *port}
+  - name: short-id-anchor
+    type: vless
+    reality-opts: {public-key: k, short-id: &shared 7891}
+redir-port: *shared
+`
+
+	raw, err := unmarshalRawConfig([]byte(profile))
+	if err != nil {
+		t.Fatalf("unmarshalRawConfig = %v", err)
+	}
+	if raw.MixedPort != 7890 || raw.RedirPort != 7891 {
+		t.Fatalf("ports = mixed %d, redir %d; want 7890 and 7891", raw.MixedPort, raw.RedirPort)
+	}
+	for index, want := range []string{"7890", "7891"} {
+		got := raw.Proxy[index]["reality-opts"].(map[string]any)["short-id"]
+		if got != want {
+			t.Errorf("proxy %d short-id = %#v, want %q", index, got, want)
+		}
+	}
+}
+
+func TestRetagShortIDListThatAliasesItselfReturns(t *testing.T) {
+	done := make(chan error, 1)
+	go func() {
+		_, err := unmarshalRawConfig([]byte("x-template: {short-id: &ids [*ids]}\nmixed-port: 7890\n"))
+		done <- err
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retagging a self-referencing short-id list did not return")
+	}
+}
 
 func TestHandleGetConfigKeepsAnUnquotedShortIDAsWritten(t *testing.T) {
 	profile := `proxies:

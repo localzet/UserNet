@@ -4,14 +4,19 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/geodata"
+	"github.com/metacubex/mihomo/component/resource"
 	"github.com/metacubex/mihomo/component/updater"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
+	"github.com/oschwald/maxminddb-golang"
 )
 
 type geoResource struct {
@@ -22,10 +27,132 @@ type geoResource struct {
 }
 
 var geoResources = map[string]geoResource{
-	"MMDB":    {update: updater.UpdateMMDB, url: geodata.MmdbUrl, setUrl: geodata.SetMmdbUrl, path: constant.Path.MMDB},
-	"ASN":     {update: updater.UpdateASN, url: geodata.ASNUrl, setUrl: geodata.SetASNUrl, path: constant.Path.ASN},
+	"MMDB":    {update: updateMMDB, url: geodata.MmdbUrl, setUrl: geodata.SetMmdbUrl, path: constant.Path.MMDB},
+	"ASN":     {update: updateASN, url: geodata.ASNUrl, setUrl: geodata.SetASNUrl, path: constant.Path.ASN},
 	"GEOIP":   {update: updater.UpdateGeoIp, url: geodata.GeoIpUrl, setUrl: geodata.SetGeoIpUrl, path: constant.Path.GeoIP},
 	"GEOSITE": {update: updater.UpdateGeoSite, url: geodata.GeoSiteUrl, setUrl: geodata.SetGeoSiteUrl, path: constant.Path.GeoSite},
+}
+
+const geoDownloadTimeout = 90 * time.Second
+
+var stagesMappedFile = runtime.GOOS == "windows"
+
+func updateMMDB() error {
+	if !stagesMappedFile {
+		return updater.UpdateMMDB()
+	}
+	return updateMaxMindDatabase(geodata.MmdbUrl(), constant.Path.MMDB())
+}
+
+func updateASN() error {
+	if !stagesMappedFile {
+		return updater.UpdateASN()
+	}
+	return updateMaxMindDatabase(geodata.ASNUrl(), constant.Path.ASN())
+}
+
+func updateMaxMindDatabase(url string, path string) error {
+	vehicle := resource.NewHTTPVehicle(url, path, "", nil, geoDownloadTimeout, 0)
+	oldPath := geoFileInUse(path)
+	var oldHash utils.HashType
+	if current, err := os.ReadFile(oldPath); err == nil {
+		oldHash = utils.MakeHash(current)
+	}
+	data, hash, err := vehicle.Read(context.Background(), oldHash)
+	if err != nil {
+		return fmt.Errorf("can't download database: %w", err)
+	}
+	if oldHash.Equal(hash) {
+		return nil
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("can't download database: no data")
+	}
+	return installMaxMindDatabase(path, data)
+}
+
+func installMaxMindDatabase(path string, data []byte) error {
+	validate := func(staged string) error {
+		instance, err := maxminddb.Open(staged)
+		if err == nil {
+			err = instance.Close()
+		}
+		return err
+	}
+	target := path
+	if stagesMappedFile {
+		target = pendingGeoPath(path)
+	}
+	return replaceGeoFile(target, data, validate)
+}
+
+func replaceGeoFile(path string, data []byte, validate func(string) error) error {
+	staged, err := writeSyncedTemp(path, data)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(staged)
+	if err := validate(staged); err != nil {
+		return err
+	}
+	return replaceGeoPath(staged, path)
+}
+
+func writeSyncedTemp(path string, data []byte) (string, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return "", err
+	}
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Chmod(0o644)
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(file.Name())
+		return "", err
+	}
+	return file.Name(), nil
+}
+
+func pendingGeoPath(path string) string {
+	return path + ".pending"
+}
+
+func geoFileInUse(path string) string {
+	if fileExists(pendingGeoPath(path)) {
+		return pendingGeoPath(path)
+	}
+	return path
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func installPendingGeoFile(path string) error {
+	pending := pendingGeoPath(path)
+	if !fileExists(pending) {
+		return nil
+	}
+	return replaceGeoPath(pending, path)
+}
+
+func installPendingGeoFiles() {
+	for _, path := range []string{constant.Path.MMDB(), constant.Path.ASN()} {
+		if err := installPendingGeoFile(path); err != nil {
+			log.Warnln("[GEO] can't install %s: %v", filepath.Base(path), err)
+		}
+	}
 }
 
 // mihomo's updaters read these links without a lock, so an unchanged one is never rewritten.
@@ -85,7 +212,7 @@ func (resource geoResource) stamp() fileStampValue {
 	if resource.path == nil {
 		return fileStampValue{}
 	}
-	info, err := os.Stat(resource.path())
+	info, err := os.Stat(geoFileInUse(resource.path()))
 	if err != nil {
 		return fileStampValue{}
 	}
@@ -167,7 +294,7 @@ func lastGeoUpdateTime() time.Time {
 	for _, path := range []string{
 		constant.Path.GeoIP(), constant.Path.MMDB(), constant.Path.ASN(), constant.Path.GeoSite(),
 	} {
-		if info, err := os.Stat(path); err == nil {
+		if info, err := os.Stat(geoFileInUse(path)); err == nil {
 			return info.ModTime()
 		}
 	}

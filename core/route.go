@@ -74,7 +74,7 @@ func readPicks() (map[string]string, map[string]uint32) {
 			picks[name] = group.Now()
 		}
 	}
-	providers := tunnel.Providers()
+	providers := providersSnapshot()
 	versions := make(map[string]uint32, len(providers))
 	for name, p := range providers {
 		versions[name] = p.Version()
@@ -85,7 +85,7 @@ func readPicks() (map[string]string, map[string]uint32) {
 // mihomo swaps in a new strategy each time a rule set, manually or on its
 // interval, loads new content.
 func readRuleSets() map[string]any {
-	providers := tunnel.RuleProviders()
+	providers := ruleProvidersSnapshot()
 	ruleSets := make(map[string]any, len(providers))
 	for name, p := range providers {
 		ruleSets[name] = p.Strategy()
@@ -235,7 +235,7 @@ func handleCheckRoutes(params *CheckRoutesParams) *RouteCheck {
 // Stock mihomo keeps its matcher private, so this follows it; a rule into a
 // sub-rule set cannot be followed from outside and reads as unresolved.
 func resolveRoute(metadata *constant.Metadata) (constant.Proxy, error) {
-	proxies := tunnel.Proxies()
+	proxies := proxiesSnapshot()
 	switch tunnel.Mode() {
 	case tunnel.Direct:
 		return proxies["DIRECT"], nil

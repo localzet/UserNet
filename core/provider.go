@@ -29,12 +29,13 @@ var errNotExternalProvider = errors.New("not external provider")
 
 func externalProviders() map[string]cp.Provider {
 	eps := make(map[string]cp.Provider)
-	for n, p := range providersSnapshot() {
+	proxyProviders, ruleProviders := providerTablesSnapshot()
+	for n, p := range proxyProviders {
 		if p.VehicleType() != cp.Compatible {
 			eps[n] = p
 		}
 	}
-	for n, p := range ruleProvidersSnapshot() {
+	for n, p := range ruleProviders {
 		if p.VehicleType() != cp.Compatible {
 			eps[n] = p
 		}
@@ -43,10 +44,11 @@ func externalProviders() map[string]cp.Provider {
 }
 
 func lookupExternalProvider(name string) (cp.Provider, bool) {
-	if p, exist := ruleProvidersSnapshot()[name]; exist && p.VehicleType() != cp.Compatible {
+	proxyProviders, ruleProviders := providerTablesSnapshot()
+	if p, exist := ruleProviders[name]; exist && p.VehicleType() != cp.Compatible {
 		return p, true
 	}
-	if p, exist := providersSnapshot()[name]; exist && p.VehicleType() != cp.Compatible {
+	if p, exist := proxyProviders[name]; exist && p.VehicleType() != cp.Compatible {
 		return p, true
 	}
 	return nil, false

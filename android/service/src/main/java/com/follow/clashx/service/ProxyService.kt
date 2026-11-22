@@ -37,7 +37,10 @@ class ProxyService : Service(), ManagedService {
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        notifyVpnStartRequested()
+        startForegroundBeforeHandling(
+            startForeground = modules::start,
+            handleStart = { notifyVpnStartRequested() },
+        )
         return START_STICKY
     }
 

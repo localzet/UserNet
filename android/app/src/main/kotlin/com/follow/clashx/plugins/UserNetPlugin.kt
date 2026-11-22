@@ -11,11 +11,13 @@ import android.net.NetworkRequest
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMethodCodec
 import com.follow.clashx.common.Components
 import org.json.JSONObject
 import java.io.BufferedWriter
@@ -31,8 +33,25 @@ import java.util.concurrent.TimeUnit
 import java.util.IdentityHashMap
 import java.util.UUID
 
+private const val USERNET_CHANNEL = "${Components.PACKAGE_NAME}/usernet_transport"
+
+internal fun createUserNetMethodChannel(
+    messenger: BinaryMessenger,
+    handler: MethodChannel.MethodCallHandler,
+): MethodChannel {
+    val taskQueue = messenger.makeBackgroundTaskQueue(
+        BinaryMessenger.TaskQueueOptions().setIsSerial(true),
+    )
+    return MethodChannel(
+        messenger,
+        USERNET_CHANNEL,
+        StandardMethodCodec.INSTANCE,
+        taskQueue,
+    ).also { it.setMethodCallHandler(handler) }
+}
+
 data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
-    private const val CHANNEL = "${Components.PACKAGE_NAME}/usernet_transport"
+    private val operationLock = Any()
     private val channels = IdentityHashMap<BinaryMessenger, MethodChannel>()
     private var context: Context? = null
     private var process: Process? = null
@@ -43,11 +62,18 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val serviceUserId: String?, val serviceCredential: String?,
         val workPlatform: String, val egressId: String,
     )
+    private data class StopResources(
+        val writer: BufferedWriter?,
+        val process: Process?,
+        val reader: Thread?,
+    )
     private var recoveryLaunch: Launch? = null
     private var networkManager: ConnectivityManager? = null
     private var physicalNetwork: Network? = null
-    private var observedNetwork = false
+    private val networkTransition = UserNetNetworkTransition<Network>()
     private var pendingNetworkRestart: Runnable? = null
+    private var pendingRelayRestart: Runnable? = null
+    private val relayRecoveryPolicy = UserNetRelayRecoveryPolicy()
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
             if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) ||
@@ -102,9 +128,10 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 manager.registerNetworkCallback(request, networkCallback)
             }
         }
-        channels[binding.binaryMessenger] = MethodChannel(binding.binaryMessenger, CHANNEL).also {
-            it.setMethodCallHandler(this)
-        }
+        channels[binding.binaryMessenger] = createUserNetMethodChannel(
+            binding.binaryMessenger,
+            this,
+        )
     }
 
     private fun selectPhysicalNetwork(excluded: Network? = null): Network? {
@@ -139,13 +166,8 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     @Synchronized
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channels.remove(binding.binaryMessenger)?.setMethodCallHandler(null)
-        if (channels.isEmpty()) {
-            networkManager?.unregisterNetworkCallback(networkCallback)
-            networkManager = null
-            physicalNetwork = null
-            observedNetwork = false
-            pendingNetworkRestart?.let(mainHandler::removeCallbacks)
-            pendingNetworkRestart = null
+        if (!shouldKeepNetworkObserver(channels.size, recoveryLaunch != null)) {
+            releaseNetworkObserver()
         }
     }
 
@@ -186,29 +208,65 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     @Synchronized
     private fun handlePhysicalNetwork(network: Network?) {
         if (physicalNetwork == network) return
-        val changed = observedNetwork
+        val recoveryRequested = recoveryLaunch != null
+        val relayReady = isRelayReadyForNetworkChange()
+        val update = networkTransition.update(network, recoveryRequested, relayReady)
         physicalNetwork = network
-        observedNetwork = true
         pendingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingNetworkRestart = null
-        if (!changed) return
+        if (!update.changed) return
+        pendingRelayRestart?.let(mainHandler::removeCallbacks)
+        pendingRelayRestart = null
         Log.i("UserNet", if (network == null) "network: unavailable" else "network: changed")
         val expectedGeneration = generation
         val request = synchronized(this) {
-            if (process?.isAlive != true) return
             recoveryLaunch ?: return
         }
+        if (!update.shouldAnnounceReconnect) return
         emit("status", "RECONNECTING", expectedGeneration)
-        if (network == null) return
-        val restart = Runnable {
+        if (!update.shouldRestart) return
+        lateinit var restart: Runnable
+        restart = Runnable {
             Thread {
-                synchronized(this) {
-                    if (generation != expectedGeneration || process?.isAlive != true) return@Thread
-                    stop(resetState = false)
+                synchronized(operationLock) {
+                    val isCurrent = synchronized(this) {
+                        val current = shouldRunScheduledNetworkRestart(
+                            recoveryRequestIsCurrent = recoveryLaunch === request,
+                            networkUpdateIsCurrent = networkTransition.isCurrent(update.revision, network),
+                            restartIsCurrent = pendingNetworkRestart === restart,
+                        )
+                        if (current && pendingNetworkRestart === restart) {
+                            pendingNetworkRestart = null
+                        }
+                        current
+                    }
+                    if (!isCurrent || selectPhysicalNetwork() != network) return@synchronized
+
+                    stopLocked(resetState = false)
+                    val targetNetwork = synchronized(this) {
+                        if (recoveryLaunch !== request) {
+                            null
+                        } else {
+                            pendingNetworkRestart?.let(mainHandler::removeCallbacks)
+                            pendingNetworkRestart = null
+                            physicalNetwork
+                        }
+                    }
+                    if (targetNetwork == null || selectPhysicalNetwork() != targetNetwork) {
+                        return@synchronized
+                    }
                     emit("status", "RECONNECTING")
                     runCatching {
-                        start(request.platform, request.joinLink, request.socksPort,
-                            request.serviceUserId, request.serviceCredential, request.workPlatform, request.egressId)
+                        startLocked(
+                            platform = request.platform,
+                            joinLink = request.joinLink,
+                            socksPort = request.socksPort,
+                            serviceUserId = request.serviceUserId,
+                            serviceCredential = request.serviceCredential,
+                            workPlatform = request.workPlatform,
+                            egressId = request.egressId,
+                            stopExisting = false,
+                        )
                     }.onFailure { emit("status", "ERROR:NETWORK_RECOVERY") }
                 }
             }.apply { name = "UserNet-network-recovery"; isDaemon = true; start() }
@@ -216,6 +274,14 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         pendingNetworkRestart = restart
         mainHandler.postDelayed(restart, 750)
     }
+
+    @Synchronized
+    private fun isRelayReadyForNetworkChange(): Boolean = isUserNetRelayReady(
+        processRunning = process?.isAlive == true,
+        activeStage = activeStage,
+        controlState = controlState,
+        transportState = transportState,
+    )
 
     private fun probe(result: MethodChannel.Result) {
         Thread {
@@ -309,7 +375,6 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
 
-    @Synchronized
     private fun start(
         platform: String,
         joinLink: String,
@@ -318,6 +383,33 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         serviceCredential: String? = null,
         workPlatform: String = "telemost",
         egressId: String = "auto",
+        preserveRecoveryBudget: Boolean = false,
+    ): Unit {
+        synchronized(operationLock) {
+            startLocked(
+                platform = platform,
+                joinLink = joinLink,
+                socksPort = socksPort,
+                serviceUserId = serviceUserId,
+                serviceCredential = serviceCredential,
+                workPlatform = workPlatform,
+                egressId = egressId,
+                preserveRecoveryBudget = preserveRecoveryBudget,
+            )
+        }
+    }
+
+    private fun startLocked(
+        platform: String,
+        joinLink: String,
+        socksPort: Int,
+        serviceUserId: String? = null,
+        serviceCredential: String? = null,
+        workPlatform: String = "telemost",
+        egressId: String = "auto",
+        preserveRecoveryBudget: Boolean = false,
+        stopExisting: Boolean = true,
+        abortIfNetworkRestartPending: Boolean = false,
     ) {
         require(platform in setOf("wbstream", "telemost", "vk")) { "Unsupported carrier: $platform" }
         require(workPlatform in setOf("wbstream", "telemost", "vk")) { "Unsupported work carrier: $workPlatform" }
@@ -327,15 +419,26 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         if (serviceMode) {
             require(!serviceCredential.isNullOrBlank()) { "serviceCredential is required" }
         }
-        stop()
-        recoveryLaunch = Launch(platform, joinLink, socksPort, serviceUserId, serviceCredential, workPlatform, egressId)
-        activeStage = if (serviceMode) "control" else "transport"
-        controlState = if (serviceMode) "connecting" else "idle"
-        transportState = if (serviceMode) "idle" else "connecting"
-        controlCarrier = if (serviceMode) platform else ""
-        transportCarrier = if (serviceMode) workPlatform else platform
+        val request = Launch(platform, joinLink, socksPort, serviceUserId, serviceCredential, workPlatform, egressId)
+        if (!preserveRecoveryBudget) synchronized(this) { relayRecoveryPolicy.reset() }
+        if (stopExisting && !stopLocked(
+                resetState = false,
+                replacementLaunch = request,
+                abortIfNetworkRestartPending = abortIfNetworkRestartPending,
+            )
+        ) {
+            return
+        }
+        synchronized(this) {
+            recoveryLaunch = request
+            activeStage = if (serviceMode) "control" else "transport"
+            controlState = if (serviceMode) "connecting" else "idle"
+            transportState = if (serviceMode) "idle" else "connecting"
+            controlCarrier = if (serviceMode) platform else ""
+            transportCarrier = if (serviceMode) workPlatform else platform
+        }
         emit("status", "STARTING")
-        launch(
+        launchLocked(
             platform = platform,
             joinLink = joinLink,
             socksPort = socksPort,
@@ -346,8 +449,7 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         )
     }
 
-    @Synchronized
-    private fun launch(
+    private fun launchLocked(
         platform: String,
         joinLink: String,
         socksPort: Int,
@@ -356,8 +458,9 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         workPlatform: String = "telemost",
         egressId: String = "auto",
     ) {
-
-        val appContext = checkNotNull(context) { "UserNet plugin is not attached" }
+        val appContext = synchronized(this) {
+            checkNotNull(context) { "UserNet plugin is not attached" }
+        }
         val relay = File(appContext.applicationInfo.nativeLibraryDir, "libusernetrelay.so")
         check(relay.isFile) { "UserNet relay binary is missing" }
         val args = mutableListOf(
@@ -383,30 +486,43 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         builder.environment()["SSL_CERT_DIR"] =
             "/apex/com.android.conscrypt/cacerts:/system/etc/security/cacerts"
         val proc = builder.start()
-        process = proc
-        writer = BufferedWriter(OutputStreamWriter(proc.outputStream))
-        val currentGeneration = ++generation
-        readerThread = Thread {
+        val outputWriter = BufferedWriter(OutputStreamWriter(proc.outputStream))
+        val currentGeneration = synchronized(this) {
+            process = proc
+            writer = outputWriter
+            ++generation
+        }
+        val outputThread = Thread {
+            var readFailure: Throwable? = null
             runCatching {
                 proc.inputStream.bufferedReader().use { input ->
                     while (true) {
                         val line = input.readLine() ?: break
                         if (currentGeneration != generation) return@Thread
                         when {
-                            line == "STATUS:READY" -> sendJoin(platform, joinLink, currentGeneration)
+                            line == "STATUS:READY" -> {
+                                markRelayStable(currentGeneration)
+                                sendJoin(platform, joinLink, currentGeneration)
+                            }
                             line.startsWith("RESOLVE:") -> resolve(line.removePrefix("RESOLVE:"), currentGeneration)
                             line.startsWith("SERVICE_SESSION_READY:") -> {
                                 val session = JSONObject(line.removePrefix("SERVICE_SESSION_READY:"))
                                 val workLink = session.getString("joinLink")
                                 emit("status", "WORK_SESSION_READY", currentGeneration)
                                 if (currentGeneration == generation) {
-                                    synchronized(this) {
-                                        if (currentGeneration != generation) return@Thread
-                                        stop(resetState = false)
-                                        activeStage = "transport"
-                                        transportState = "connecting"
-                                        emit("status", "TRANSPORT_STARTING")
-                                        launch(platform = workPlatform, joinLink = workLink, socksPort = socksPort)
+                                    synchronized(operationLock) {
+                                        val canHandoff = synchronized(this) {
+                                            currentGeneration == generation && process === proc
+                                        }
+                                        if (canHandoff) {
+                                            stopLocked(resetState = false)
+                                            synchronized(this) {
+                                                activeStage = "transport"
+                                                transportState = "connecting"
+                                            }
+                                            emit("status", "TRANSPORT_STARTING")
+                                            launchLocked(platform = workPlatform, joinLink = workLink, socksPort = socksPort)
+                                        }
                                     }
                                 }
                                 return@Thread
@@ -422,26 +538,136 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     }
                 }
             }.onFailure { error ->
-                // Closing the process interrupts this blocking pipe read on
-                // Android. That is a normal relay lifecycle transition.
-                if (currentGeneration == generation && process === proc) {
-                    Log.e("UserNet", "relay output failed", error)
-                    emit("status", "ERROR:RELAY_OUTPUT", currentGeneration)
-                }
+                readFailure = error
             }
-            if (currentGeneration == generation && !lastStatus.startsWith("ERROR:")) {
-                emit("status", "STOPPED", currentGeneration)
-            }
+            handleRelayExit(proc, currentGeneration, readFailure)
         }.also {
             it.name = "UserNet-relay-output"
-            it.start()
+        }
+        synchronized(this) { readerThread = outputThread }
+        outputThread.start()
+    }
+
+    private fun handleRelayExit(
+        exitedProcess: Process,
+        expectedGeneration: Long,
+        readFailure: Throwable?,
+    ) {
+        val isCurrent = synchronized(this) {
+            expectedGeneration == generation && process === exitedProcess
+        }
+        if (readFailure != null && isCurrent) {
+            Log.e("UserNet", "relay output failed", readFailure)
+        }
+
+        val shouldRetry = synchronized(this) {
+            shouldRetryUnexpectedRelayExit(
+                generationIsCurrent = expectedGeneration == generation,
+                processIsCurrent = process === exitedProcess,
+                recoveryRequested = recoveryLaunch != null,
+                terminalError = lastStatus.startsWith("ERROR:"),
+                physicalNetworkAvailable = physicalNetwork != null,
+                networkRestartPending = pendingNetworkRestart != null,
+            )
+        }
+        if (shouldRetry) {
+            if (exitedProcess.isAlive) exitedProcess.destroy()
+            scheduleRelayRestart(exitedProcess, expectedGeneration)
+            return
+        }
+
+        val waitingForNetwork = synchronized(this) {
+            expectedGeneration == generation && process === exitedProcess &&
+                    recoveryLaunch != null && !lastStatus.startsWith("ERROR:")
+        }
+        if (waitingForNetwork) {
+            emit("status", "RECONNECTING", expectedGeneration)
+        } else if (isCurrent && !lastStatus.startsWith("ERROR:")) {
+            emit("status", "STOPPED", expectedGeneration)
+        }
+    }
+
+    private fun scheduleRelayRestart(exitedProcess: Process, expectedGeneration: Long) {
+        var retryExhausted = false
+        synchronized(this) {
+            if (!shouldRetryUnexpectedRelayExit(
+                    generationIsCurrent = expectedGeneration == generation,
+                    processIsCurrent = process === exitedProcess,
+                    recoveryRequested = recoveryLaunch != null,
+                    terminalError = lastStatus.startsWith("ERROR:"),
+                    physicalNetworkAvailable = physicalNetwork != null,
+                    networkRestartPending = pendingNetworkRestart != null,
+                )
+            ) {
+                return
+            }
+
+            val request = recoveryLaunch ?: return
+            val network = physicalNetwork ?: return
+            val delayMillis = relayRecoveryPolicy.nextDelayMillis(SystemClock.elapsedRealtime())
+            if (delayMillis == null) {
+                retryExhausted = true
+            } else {
+                lateinit var restart: Runnable
+                restart = Runnable {
+                    Thread {
+                        runRelayRestartIfCurrent(
+                            lock = this,
+                            operationLock = operationLock,
+                            isCurrent = {
+                                shouldRunScheduledRelayRestart(
+                                    generationIsCurrent = expectedGeneration == generation,
+                                    processIsCurrent = process === exitedProcess,
+                                    recoveryRequested = recoveryLaunch === request,
+                                    restartIsCurrent = pendingRelayRestart === restart,
+                                    terminalError = lastStatus.startsWith("ERROR:"),
+                                    physicalNetworkAvailable = physicalNetwork != null,
+                                    networkIsCurrent = physicalNetwork == network,
+                                    networkRestartPending = pendingNetworkRestart != null,
+                                )
+                            },
+                            restart = {
+                                synchronized(this) { pendingRelayRestart = null }
+                                runCatching {
+                                    startLocked(
+                                        platform = request.platform,
+                                        joinLink = request.joinLink,
+                                        socksPort = request.socksPort,
+                                        serviceUserId = request.serviceUserId,
+                                        serviceCredential = request.serviceCredential,
+                                        workPlatform = request.workPlatform,
+                                        egressId = request.egressId,
+                                        preserveRecoveryBudget = true,
+                                        abortIfNetworkRestartPending = true,
+                                    )
+                                }.onFailure { error ->
+                                    Log.e("UserNet", "relay restart failed", error)
+                                    emit("status", "ERROR:RELAY_RESTART", generation)
+                                }
+                            },
+                        )
+                    }.apply {
+                        name = "UserNet-relay-restart"
+                        isDaemon = true
+                        start()
+                    }
+                }
+                pendingRelayRestart = restart
+                mainHandler.postDelayed(restart, delayMillis)
+            }
+        }
+
+        if (retryExhausted) {
+            emit("status", "ERROR:RELAY_EXIT", expectedGeneration)
+        } else {
+            emit("status", "RECONNECTING", expectedGeneration)
         }
     }
 
     private fun emit(method: String, value: String, expectedGeneration: Long? = null) {
         val emissionGeneration = synchronized(this) {
             if (expectedGeneration != null && expectedGeneration != generation) return
-            if (method == "status") updateStatus(value)
+            if (method == "status") updateStatus(value, generation)
             generation
         }
         mainHandler.post {
@@ -454,14 +680,20 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     @Synchronized
-    private fun updateStatus(value: String) {
+    private fun updateStatus(value: String, expectedGeneration: Long) {
         when {
-            value == "CONTROL_CONNECTED" -> controlState = "connected"
+            value == "CONTROL_CONNECTED" -> {
+                controlState = "connected"
+                markRelayStable(expectedGeneration)
+            }
             value == "WORK_SESSION_READY" -> {
                 controlState = "complete"
                 transportState = "connecting"
             }
-            value == "TUNNEL_CONNECTED" -> transportState = "connected"
+            value == "TUNNEL_CONNECTED" -> {
+                transportState = "connected"
+                markRelayStable(expectedGeneration)
+            }
             value == "TRANSPORT_VERIFYING" -> transportState = "connecting"
             value == "TUNNEL_LOST" || value == "RECONNECTING" || value == "CONNECTING" -> {
                 verificationTicket++
@@ -477,6 +709,20 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         lastStatus = value
         Log.i("UserNet", "status: $value")
+    }
+
+    private fun markRelayStable(expectedGeneration: Long) {
+        synchronized(this) {
+            if (!markRelayReadyIfCurrent(
+                    relayRecoveryPolicy,
+                    expectedGeneration,
+                    generation,
+                    SystemClock.elapsedRealtime(),
+                )
+            ) return
+            pendingRelayRestart?.let(mainHandler::removeCallbacks)
+            pendingRelayRestart = null
+        }
     }
 
     private fun verifyTransport(port: Int, expectedGeneration: Long) {
@@ -571,35 +817,89 @@ data object UserNetPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }.onFailure { Log.e("UserNet", "relay stdin failed", it) }
     }
 
-    @Synchronized
-    private fun stop(resetState: Boolean = true) {
-        generation++
+    private fun stop(resetState: Boolean = true): Unit {
+        synchronized(operationLock) {
+            stopLocked(resetState)
+        }
+    }
+
+    private fun stopLocked(
+        resetState: Boolean = true,
+        replacementLaunch: Launch? = null,
+        abortIfNetworkRestartPending: Boolean = false,
+    ): Boolean {
+        val resources = runUnlessNetworkRestartPending(
+            lock = this,
+            networkRestartPending = { abortIfNetworkRestartPending && pendingNetworkRestart != null },
+        ) {
+            generation++
+            pendingNetworkRestart?.let(mainHandler::removeCallbacks)
+            pendingNetworkRestart = null
+            pendingRelayRestart?.let(mainHandler::removeCallbacks)
+            pendingRelayRestart = null
+            if (resetState) {
+                recoveryLaunch = null
+                relayRecoveryPolicy.reset()
+                controlState = "idle"
+                transportState = "idle"
+                controlCarrier = ""
+                transportCarrier = ""
+            } else if (replacementLaunch != null) {
+                recoveryLaunch = replacementLaunch
+            }
+            val writerToClose = writer
+            val processToStop = process
+            val readerToInterrupt = readerThread
+            writer = null
+            process = null
+            readerThread = null
+            if (!shouldKeepNetworkObserver(channels.size, recoveryLaunch != null)) {
+                unregisterNetworkObserver(takeNetworkObserverLocked())
+            }
+            StopResources(writerToClose, processToStop, readerToInterrupt)
+        } ?: return false
+
+        if (resetState) emit("status", "STOPPED")
+        runCatching {
+            resources.writer?.write("STOP")
+            resources.writer?.newLine()
+            resources.writer?.flush()
+        }
+        runCatching { resources.writer?.close() }
+        if (resources.process != null && !resources.process.waitFor(2_000, TimeUnit.MILLISECONDS)) {
+            resources.process.destroy()
+        }
+        if (resources.process != null && resources.process.isAlive &&
+            !resources.process.waitFor(500, TimeUnit.MILLISECONDS)
+        ) {
+            resources.process.destroyForcibly()
+        }
+        resources.reader?.interrupt()
+        return true
+    }
+
+    private fun releaseNetworkObserver() {
+        synchronized(this) {
+            unregisterNetworkObserver(takeNetworkObserverLocked())
+        }
+    }
+
+    private fun takeNetworkObserverLocked(): ConnectivityManager? {
         pendingNetworkRestart?.let(mainHandler::removeCallbacks)
         pendingNetworkRestart = null
-        if (resetState) {
-            recoveryLaunch = null
-            controlState = "idle"
-            transportState = "idle"
-            controlCarrier = ""
-            transportCarrier = ""
-            emit("status", "STOPPED")
+        pendingRelayRestart?.let(mainHandler::removeCallbacks)
+        pendingRelayRestart = null
+        val manager = networkManager
+        networkManager = null
+        physicalNetwork = null
+        networkTransition.reset()
+        return manager
+    }
+
+    private fun unregisterNetworkObserver(manager: ConnectivityManager?) {
+        manager?.let {
+            runCatching { it.unregisterNetworkCallback(networkCallback) }
+                .onFailure { Log.w("UserNet", "network observer release failed") }
         }
-        runCatching {
-            writer?.write("STOP")
-            writer?.newLine()
-            writer?.flush()
-        }
-        runCatching { writer?.close() }
-        writer = null
-        val active = process
-        if (active != null && !active.waitFor(2000, TimeUnit.MILLISECONDS)) {
-            active.destroy()
-        }
-        if (active != null && active.isAlive && !active.waitFor(500, TimeUnit.MILLISECONDS)) {
-            active.destroyForcibly()
-        }
-        process = null
-        readerThread?.interrupt()
-        readerThread = null
     }
 }

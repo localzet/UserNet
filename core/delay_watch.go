@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/tunnel"
 )
 
 // mihomo keeps the result of every check it runs in the proxy's history and
@@ -70,7 +69,7 @@ func stopDelayWatch() {
 
 // A lazy check skips its tick on an idle tunnel; a touch lets the first run.
 func touchProviders() {
-	for _, provider := range tunnel.Providers() {
+	for _, provider := range providersSnapshot() {
 		provider.Touch()
 	}
 }

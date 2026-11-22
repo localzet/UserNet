@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -586,6 +587,133 @@ class ServiceStateMachineTest {
         assertEquals(1, host.setupCalls)
         assertEquals(1, host.startCalls)
         assertTrue(machine.isRunRequested)
+    }
+
+    @Test
+    fun `a quick stop supersedes a reserved start before its permission callback`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        val start = machine.reserveQuickAction(QuickAction.START)
+        val stop = machine.reserveQuickAction(QuickAction.STOP)
+
+        machine.handleQuickAction(start.request)
+        machine.handleQuickAction(stop.request)
+
+        assertEquals(0, host.setupCalls)
+        assertEquals(0, host.startCalls)
+        assertFalse(machine.isRunRequested)
+    }
+
+    @Test
+    fun `repeated quick starts and stops are idempotent`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        val firstStart = machine.reserveQuickAction(QuickAction.START)
+        val latestStart = machine.reserveQuickAction(QuickAction.START)
+        assertFalse(latestStart.shouldDispatch)
+        assertSame(firstStart.request, latestStart.request)
+
+        machine.handleQuickAction(firstStart.request)
+
+        assertEquals(1, host.setupCalls)
+        assertEquals(1, host.startCalls)
+        assertFalse(machine.reserveQuickAction(QuickAction.START).shouldDispatch)
+
+        val firstStop = machine.reserveQuickAction(QuickAction.STOP)
+        val repeatedStop = machine.reserveQuickAction(QuickAction.STOP)
+        assertFalse(repeatedStop.shouldDispatch)
+        assertSame(firstStop.request, repeatedStop.request)
+        machine.handleQuickAction(firstStop.request)
+
+        assertEquals(1, host.stopCalls)
+        assertFalse(machine.isRunRequested)
+        assertFalse(machine.reserveQuickAction(QuickAction.STOP).shouldDispatch)
+    }
+
+    @Test
+    fun `toggle resolves against the newest reserved run request`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        val start = machine.reserveQuickAction(QuickAction.START)
+        val toggle = machine.reserveQuickAction(QuickAction.TOGGLE)
+
+        assertEquals(QuickAction.STOP, toggle.action)
+        machine.handleQuickAction(start.request)
+        machine.handleQuickAction(toggle.request)
+
+        assertEquals(0, host.setupCalls)
+        assertFalse(machine.isRunRequested)
+    }
+
+    @Test
+    fun `a saved permission action re-registers with a current request token`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        val beforeRecreation = machine.reserveQuickAction(QuickAction.START)
+        val afterRecreation = machine.reregisterQuickAction(QuickAction.START)
+        assertSame(beforeRecreation.request, afterRecreation.request)
+        assertTrue(afterRecreation.shouldDispatch)
+
+        machine.handleQuickAction(afterRecreation.request)
+        assertEquals(1, host.setupCalls)
+        assertEquals(1, host.startCalls)
+
+        machine.handleQuickAction(beforeRecreation.request)
+
+        assertEquals(1, host.setupCalls)
+        assertEquals(1, host.startCalls)
+        assertTrue(machine.isRunRequested)
+    }
+
+    @Test
+    fun `re-registering an old start cannot supersede a newer stop`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        machine.reserveQuickAction(QuickAction.START)
+        val stop = machine.reserveQuickAction(QuickAction.STOP)
+
+        val restored = machine.reregisterQuickAction(QuickAction.START)
+
+        assertFalse(restored.shouldDispatch)
+        assertSame(stop.request, restored.request)
+        assertTrue(machine.isCurrentRequest(stop.request))
+        machine.handleQuickAction(restored.request)
+        assertEquals(0, host.setupCalls)
+        assertFalse(machine.isRunRequested)
+    }
+
+    @Test
+    fun `a saved start can be restored into a pristine process arbiter`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+
+        val restored = machine.reregisterQuickAction(QuickAction.START)
+
+        assertTrue(restored.shouldDispatch)
+        assertTrue(machine.isCurrentRequest(restored.request))
+        machine.handleQuickAction(restored.request)
+
+        assertEquals(1, host.setupCalls)
+        assertEquals(1, host.startCalls)
+        assertTrue(machine.isRunRequested)
+    }
+
+    @Test
+    fun `timed out permission reservation can be retried without a stale callback starting`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        val timedOut = machine.reserveQuickAction(QuickAction.START)
+
+        assertTrue(machine.invalidateQuickAction(timedOut.request))
+        val retry = machine.reserveQuickAction(QuickAction.START)
+        assertTrue(retry.shouldDispatch)
+
+        machine.handleQuickAction(timedOut.request)
+        assertEquals(0, host.setupCalls)
+        machine.handleQuickAction(retry.request)
+
+        assertEquals(1, host.setupCalls)
+        assertEquals(1, host.startCalls)
     }
 
     @Test

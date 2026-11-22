@@ -478,6 +478,44 @@ func TestLookupProxyPrefersTheProviderEntry(t *testing.T) {
 	}
 }
 
+func TestLookupProxyResolvesProviderNameCollisionsDeterministically(t *testing.T) {
+	declared := namedProxy("shared")
+	fromSubscription := adapter.NewProxy(outbound.NewDirectWithOption(outbound.DirectOption{
+		BasicOption: outbound.BasicOption{ProviderName: "subscription"},
+		Name:        "shared",
+	}))
+
+	compatibleProvider := func(name string, proxy constant.Proxy) cp.ProxyProvider {
+		t.Helper()
+		proxies := []constant.Proxy{proxy}
+		health := provider.NewHealthCheck(proxies, "", 0, 0, true, nil)
+		provider, err := provider.NewCompatibleProvider(name, proxies, health)
+		if err != nil {
+			t.Fatalf("NewCompatibleProvider: %v", err)
+		}
+		return provider
+	}
+
+	tunnel.UpdateProxies(
+		map[string]constant.Proxy{"shared": declared},
+		map[string]cp.ProxyProvider{
+			provider.ReservedName: compatibleProvider(provider.ReservedName, declared),
+			"subscription":        compatibleProvider("subscription", fromSubscription),
+		},
+	)
+	t.Cleanup(func() {
+		tunnel.UpdateProxies(nil, nil)
+		invalidateAllProxies()
+	})
+
+	for rebuild := 0; rebuild < 64; rebuild++ {
+		invalidateAllProxies()
+		if lookupProxy("shared") != fromSubscription {
+			t.Fatalf("rebuild %d did not resolve the subscription provider entry", rebuild)
+		}
+	}
+}
+
 // A subscription refresh has to reach a delay test without a config apply,
 // which is the whole reason lookupProxy may read a cache at all.
 func TestLookupProxyFollowsAProviderUpdate(t *testing.T) {
@@ -607,13 +645,16 @@ func TestProxyTableReadsAreSerialisedAgainstAnApply(t *testing.T) {
 		defer wg.Done()
 		for round := 0; round < rounds; round++ {
 			name := "subscription-" + strconv.Itoa(round)
-			tunnel.UpdateProxies(
-				map[string]constant.Proxy{"DIRECT": namedProxy("DIRECT")},
-				map[string]cp.ProxyProvider{name: newCachingProvider(name, "node")},
-			)
-			tunnel.UpdateRules(nil, nil, map[string]cp.RuleProvider{
-				name: &fakeRuleProvider{name: name, vehicle: cp.HTTP},
+			withTunnelStateWrite(func() {
+				tunnel.UpdateProxies(
+					map[string]constant.Proxy{"DIRECT": namedProxy("DIRECT")},
+					map[string]cp.ProxyProvider{name: newCachingProvider(name, "node")},
+				)
+				tunnel.UpdateRules(nil, nil, map[string]cp.RuleProvider{
+					name: &fakeRuleProvider{name: name, vehicle: cp.HTTP},
+				})
 			})
+			invalidateAllProxies()
 		}
 		close(stop)
 	}()

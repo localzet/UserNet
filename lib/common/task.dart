@@ -349,11 +349,17 @@ Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
     if (rawConfig['rules'] != null) {
       rules = List<String>.from(rawConfig['rules']);
     }
+    final matchOverride = data.matchTarget?.trim();
+    if (matchOverride?.isNotEmpty == true) {
+      rules = rules
+          .map((rule) => _overrideMatchRule(rule, matchOverride!))
+          .toList();
+    }
     if (addedRules.isNotEmpty) {
       final hasMatchPlaceholder = addedRules.any(
         (item) => item.ruleTarget?.toUpperCase() == 'MATCH',
       );
-      String? replacementTarget = data.matchTarget?.trim();
+      String? replacementTarget = matchOverride;
       if (replacementTarget?.isEmpty == true) {
         replacementTarget = null;
       }
@@ -382,6 +388,12 @@ Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
     }
   } else {
     rules = data.rules.map((item) => item.rawValue).toList();
+    final matchOverride = data.matchTarget?.trim();
+    if (matchOverride?.isNotEmpty == true) {
+      rules = rules
+          .map((rule) => _overrideMatchRule(rule, matchOverride!))
+          .toList();
+    }
   }
   if (data.proxyGroups.isNotEmpty) {
     rawConfig['proxy-groups'] = data.proxyGroups
@@ -391,6 +403,15 @@ Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
   rawConfig['rules'] = rules;
   final yaml = await _encodeYaml(Map<String, dynamic>.from(rawConfig));
   return (yaml: yaml, md5: yaml.toMd5(), counts: configCountsOf(rawConfig));
+}
+
+String _overrideMatchRule(String rule, String target) {
+  final separator = rule.indexOf(',');
+  final type = separator < 0 ? rule : rule.substring(0, separator);
+  if (type.trim().toUpperCase() != 'MATCH') return rule;
+  return separator < 0
+      ? '$type,$target'
+      : '${rule.substring(0, separator + 1)}$target';
 }
 
 typedef ShakingStoreArgs = ({

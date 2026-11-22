@@ -27,8 +27,8 @@ func withProbeProxies(t *testing.T, names ...string) {
 	for _, name := range names {
 		proxies[name] = namedProxy(name)
 	}
-	tunnel.UpdateProxies(proxies, nil)
-	t.Cleanup(func() { tunnel.UpdateProxies(nil, nil) })
+	withTunnelStateWrite(func() { tunnel.UpdateProxies(proxies, nil) })
+	t.Cleanup(func() { withTunnelStateWrite(func() { tunnel.UpdateProxies(nil, nil) }) })
 }
 
 func TestHandleProbePinsTheNamedProxy(t *testing.T) {

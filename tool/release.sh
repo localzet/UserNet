@@ -17,6 +17,7 @@ Usage: tool/release.sh <pre|stable> [options]
 
   pre                Tag the next vX.Y.Z-pre.N prerelease.
   stable             Write the changelog, commit it, and tag vX.Y.Z.
+                     Stable releases must start from main and its origin/main base.
 
 Options:
   --version X.Y.Z    Target app version. Defaults to the pubspec version,
@@ -82,9 +83,13 @@ fi
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
 [[ "$branch" != "HEAD" ]] || die "detached HEAD; check out a branch first"
-if [[ "$branch" != "main" ]]; then
-  echo "note: releasing from '$branch', not main. CI triggers on the tag, so"
-  echo "      this publishes '$branch' while main stays behind."
+if [[ "$mode" == "stable" ]]; then
+  [[ "$branch" == "main" ]] ||
+    die "stable releases must start from main; current branch is '$branch'"
+  git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null ||
+    die "origin/main is missing; fetch origin/main before creating a stable release"
+  git merge-base --is-ancestor HEAD refs/remotes/origin/main ||
+    die "HEAD is not reachable from origin/main; merge the release changes into main first"
 fi
 
 current="$(pubspec_version)"
