@@ -46,6 +46,30 @@ jobs:
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
         working-directory: core
 
+  release-signer:
+    name: Release signer tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: release-signer/go.mod
+      - run: go test -race ./...
+        working-directory: release-signer
+      - run: go vet ./...
+        working-directory: release-signer
+      - name: Validate and build the hardened signer container
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp release-signer/signer.env.example release-signer/signer.env
+          trap 'rm -f release-signer/signer.env' EXIT
+          docker compose -f release-signer/compose.yml config -q
+          docker compose -f release-signer/compose.yml build
+
   flutter:
     name: Flutter analysis and tests
     runs-on: ubuntu-24.04
@@ -142,6 +166,8 @@ jobs:
           package_name="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" \
             | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -1)"
           test "$package_name" = 'com.userlay.usernet.dev'
+      - name: Build unsigned stable APK for isolated signing
+        run: bash scripts/build-usernet-unsigned-stable.sh
       - if: >-
           (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)

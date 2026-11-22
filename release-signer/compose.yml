@@ -1,0 +1,64 @@
+services:
+  usernet-release-signer:
+    image: usernet-release-signer:local
+    build:
+      context: ..
+      dockerfile: release-signer/Dockerfile
+    container_name: usernet-release-signer
+    restart: unless-stopped
+    user: "994:994"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 1536m
+    cpus: 1.5
+    env_file:
+      - ./signer.env
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=1200m,uid=994,gid=994,mode=0700
+    volumes:
+      - /etc/usernet-release-signer/usernet-release.p12:/run/keys/usernet-release.p12:ro
+      - /etc/usernet-release-signer/signing.password:/run/keys/signing.password:ro
+      - /var/lib/usernet-release-signer/replay:/state:rw
+      - /opt/usernet-updates-origin/releases:/ota/releases:ro
+      - /opt/usernet-updates-origin/releases/android:/ota/releases/android:rw
+      - /opt/usernet-updates-origin/releases/linux:/ota/releases/linux:rw
+      - /opt/usernet-updates-origin/releases/windows:/ota/releases/windows:rw
+      - /opt/usernet-updates-origin/releases/macos:/ota/releases/macos:rw
+      - /var/lib/usernet-release-signer/ota-state:/ota/releases/.usernet-ota:rw
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=external
+      - traefik.http.routers.usernet-release-signer.rule=Host(`www.userlay.com`) && PathPrefix(`/usernet-release-signer/`)
+      - traefik.http.routers.usernet-release-signer.priority=120
+      - traefik.http.routers.usernet-release-signer.entrypoints=websecure
+      - traefik.http.routers.usernet-release-signer.tls=true
+      - traefik.http.routers.usernet-release-signer.tls.certresolver=letsencrypt
+      - traefik.http.routers.usernet-release-signer.middlewares=usernet-release-signer-strip
+      - traefik.http.middlewares.usernet-release-signer-strip.stripprefix.prefixes=/usernet-release-signer
+      - traefik.http.routers.usernet-release-signer.service=usernet-release-signer
+      - traefik.http.services.usernet-release-signer.loadbalancer.server.port=8080
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - external
+
+networks:
+  external:
+    external: true

@@ -208,6 +208,9 @@ jobs:
     needs: [release-plan]
     runs-on: ubuntu-24.04
     environment: usernet-production
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -240,31 +243,53 @@ jobs:
           test -n "$(find "$clang_root" -maxdepth 2 -type f -name 'libclang.*' -print -quit)"
           echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - run: flutter pub get
-      - name: Install isolated Android signing key
-        env:
-          USERNET_RELEASE_KEYSTORE_BASE64: ${{ secrets.USERNET_RELEASE_KEYSTORE_BASE64 }}
-          USERNET_RELEASE_SIGNING_PASSWORD: ${{ secrets.USERNET_RELEASE_SIGNING_PASSWORD }}
+      - name: Build unsigned stable APK
+        run: bash scripts/build-usernet-unsigned-stable.sh
+      - name: Request short-lived identity and sign APK on isolated signer
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$USERNET_RELEASE_KEYSTORE_BASE64"
-          test -n "$USERNET_RELEASE_SIGNING_PASSWORD"
-          signing_dir="$RUNNER_TEMP/usernet-signing"
-          install -d -m 700 "$signing_dir"
-          printf '%s' "$USERNET_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/usernet-release.p12"
-          printf '%s' "$USERNET_RELEASE_SIGNING_PASSWORD" > "$signing_dir/signing.password"
-          chmod 600 "$signing_dir/usernet-release.p12" "$signing_dir/signing.password"
-          {
-            echo "USERNET_SIGNING_DIR=$signing_dir"
-            echo "USERNET_APKSIGNER_BIN=$ANDROID_HOME/build-tools/36.0.0/apksigner"
-            echo "USERNET_AAPT_BIN=$ANDROID_HOME/build-tools/36.0.0/aapt"
-          } >> "$GITHUB_ENV"
-      - name: Build and verify signed stable APK
-        run: bash scripts/build-usernet-release.sh stable
+          USERNET_RELEASE_VERSION='${{ needs.release-plan.outputs.version }}'
+          USERNET_RELEASE_BUILD='${{ needs.release-plan.outputs.build }}'
+          unsigned_apk="build/usernet-releases/usernet-unsigned-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD.apk"
+          signed_apk="$RUNNER_TEMP/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD.apk"
+          token_response="$RUNNER_TEMP/usernet-signer-token.json"
+          auth_config="$RUNNER_TEMP/usernet-signer-auth.curl"
+          response_headers="$RUNNER_TEMP/usernet-signer-response.headers"
+
+          curl --fail --silent --show-error --get \
+            --data-urlencode 'audience=usernet-release-signer' \
+            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL" \
+            --output "$token_response"
+          token="$(jq -er '.value | strings' "$token_response")"
+          printf 'header = "Authorization: Bearer %s"\n' "$token" > "$auth_config"
+          chmod 600 "$auth_config"
+          unset token
+          rm -f "$token_response"
+
+          curl --fail --silent --show-error \
+            --config "$auth_config" \
+            --header 'Content-Type: application/vnd.android.package-archive' \
+            --dump-header "$response_headers" \
+            --data-binary "@$unsigned_apk" \
+            "https://www.userlay.com/usernet-release-signer/v1/sign?version=$USERNET_RELEASE_VERSION&build=$USERNET_RELEASE_BUILD" \
+            --output "$signed_apk"
+
+          expected_sha="$(awk 'tolower($1) == "x-content-sha256:" { gsub("\\r", ""); print $2 }' "$response_headers")"
+          actual_sha="$(sha256sum "$signed_apk" | cut -d' ' -f1)"
+          if [[ ! "$expected_sha" =~ ^[a-f0-9]{64}$ || "$expected_sha" != "$actual_sha" ]]; then
+            echo 'Signer response checksum is invalid.' >&2
+            exit 1
+          fi
+          install -D -m 0644 "$signed_apk" \
+            "$RUNNER_TEMP/artifacts/android/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD.apk"
+          rm -f "$auth_config" "$response_headers" "$signed_apk"
+          echo "Signed stable APK SHA-256: $actual_sha"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: usernet-android-apk
-          path: build/usernet-releases/usernet-stable-${{ needs.release-plan.outputs.version }}-${{ needs.release-plan.outputs.build }}.apk
+          path: ${{ runner.temp }}/artifacts/android/usernet-stable-${{ needs.release-plan.outputs.version }}-${{ needs.release-plan.outputs.build }}.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -277,6 +302,7 @@ jobs:
     permissions:
       actions: read
       contents: write
+      id-token: write
     env:
       USERNET_RELEASE_VERSION: ${{ needs.release-plan.outputs.version }}
       USERNET_RELEASE_BUILD: ${{ needs.release-plan.outputs.build }}
@@ -357,30 +383,29 @@ jobs:
               --title "UserNet $USERNET_RELEASE_VERSION" \
               --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
-      - name: Publish verified bundle to the restricted OTA receiver
-        env:
-          OTA_SSH_PRIVATE_KEY: ${{ secrets.OTA_SSH_PRIVATE_KEY }}
-          OTA_SSH_KNOWN_HOSTS: ${{ secrets.OTA_SSH_KNOWN_HOSTS }}
+      - name: Publish verified bundle through the isolated OIDC receiver
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$OTA_SSH_PRIVATE_KEY"
-          test -n "$OTA_SSH_KNOWN_HOSTS"
-          key_file="$RUNNER_TEMP/usernet-ota-key"
-          known_hosts_file="$RUNNER_TEMP/usernet-ota-known-hosts"
-          install -m 600 /dev/null "$key_file"
-          install -m 600 /dev/null "$known_hosts_file"
-          printf '%s\n' "$OTA_SSH_PRIVATE_KEY" > "$key_file"
-          printf '%s\n' "$OTA_SSH_KNOWN_HOSTS" > "$known_hosts_file"
           tar_file="$RUNNER_TEMP/usernet-release/ota-bundle.tar.gz"
-          ssh -T \
-            -i "$key_file" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$known_hosts_file" \
-            -o ConnectTimeout=15 \
-            "usernet-ota@www.userlay.com" < "$tar_file"
+          token_response="$RUNNER_TEMP/usernet-signer-token.json"
+          auth_config="$RUNNER_TEMP/usernet-signer-auth.curl"
+          curl --fail --silent --show-error --get \
+            --data-urlencode 'audience=usernet-release-signer' \
+            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL" \
+            --output "$token_response"
+          token="$(jq -er '.value | strings' "$token_response")"
+          printf 'header = "Authorization: Bearer %s"\n' "$token" > "$auth_config"
+          chmod 600 "$auth_config"
+          unset token
+          rm -f "$token_response"
+          curl --fail --silent --show-error \
+            --config "$auth_config" \
+            --header 'Content-Type: application/gzip' \
+            --data-binary "@$tar_file" \
+            https://www.userlay.com/usernet-release-signer/v1/publish
+          rm -f "$auth_config"
       - name: Verify public OTA manifests and packages
         shell: bash
         run: |
