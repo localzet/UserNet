@@ -1,7 +1,7 @@
 name: fl_clash
 description: UserNet — a multiplatform VPN and proxy client.
 publish_to: 'none'
-version: 0.5.12+2026110805
+version: 0.5.13+2026112201
 environment:
   sdk: '>=3.10.0 <4.0.0'
 

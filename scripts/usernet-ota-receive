@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+  echo 'Remote commands are disabled for this key.' >&2
+  exit 64
+fi
+
+exec /usr/bin/python3 /opt/usernet-updates-origin/usernet_ota.py receive \
+  --root /opt/usernet-updates-origin/releases

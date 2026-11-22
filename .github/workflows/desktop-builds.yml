@@ -4,17 +4,111 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-builds-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: usernet-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  release-plan:
+    name: Check stable release version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Validate release metadata and determine whether to publish
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_line="$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)"
+          if [[ ! "$version_line" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]{10})$ ]]; then
+            echo 'pubspec.yaml version must be X.Y.Z+YYYYMMDDNN.' >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          build="${BASH_REMATCH[2]}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo 'Non-main validation run; stable publishing is disabled.'
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changelog_notes="$(mktemp)"
+          awk -v version="$version" '
+            $0 ~ "^## " version "([[:space:]]|$)" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+            END { if (!found) exit 1 }
+          ' CHANGELOG.md > "$changelog_notes"
+          if ! grep -q '[^[:space:]]' "$changelog_notes"; then
+            echo "CHANGELOG.md has no release notes for $version." >&2
+            exit 1
+          fi
+
+          remote_build=''
+          remote_version=''
+          for platform in android linux windows macos; do
+            manifest="$(curl --fail --silent --show-error --location \
+              --proto '=https' --tlsv1.2 \
+              "https://www.userlay.com/usernet-updates/$platform/stable.json")"
+            platform_version="$(jq -er '.version | strings' <<< "$manifest")"
+            platform_build="$(jq -er '.build | numbers' <<< "$manifest")"
+            if [[ -z "$remote_build" ]]; then
+              remote_build="$platform_build"
+              remote_version="$platform_version"
+            elif [[ "$remote_build" != "$platform_build" || "$remote_version" != "$platform_version" ]]; then
+              echo 'Published OTA manifests are not on one consistent release.' >&2
+              exit 1
+            fi
+          done
+
+          if (( build < remote_build )); then
+            echo "Refusing to publish build $build over newer OTA build $remote_build." >&2
+            exit 1
+          fi
+
+          tag="v$version"
+          draft=false
+          if release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft 2>/dev/null)"; then
+            draft="$(jq -r '.isDraft' <<< "$release_json")"
+          fi
+
+          if (( build == remote_build )); then
+            if [[ "$remote_version" != "$version" ]]; then
+              echo "Build $build is already published under version $remote_version." >&2
+              exit 1
+            fi
+            if [[ "$draft" != true ]]; then
+              echo 'publish=false' >> "$GITHUB_OUTPUT"
+              echo "Build $build is already live; nothing to publish."
+              exit 0
+            fi
+          elif [[ "$draft" == true ]]; then
+            echo "A draft $tag already exists; this run will resume its OTA publication."
+          elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag is already published; increment the version before publishing." >&2
+            exit 1
+          fi
+
+          echo 'publish=true' >> "$GITHUB_OUTPUT"
+          echo "Ready to publish UserNet $version ($build)."
+
   windows:
     name: Windows x64
     runs-on: windows-2022
@@ -40,14 +134,11 @@ jobs:
           target: x86_64-pc-windows-msvc
           cache: false
       - run: flutter pub get
-      - run: dart setup.dart windows --env stable --targets exe,zip --arch amd64
-      - name: Create checksums
-        shell: pwsh
-        run: Get-ChildItem dist -File | ForEach-Object { $hash = Get-FileHash $_.FullName -Algorithm SHA256; "$($hash.Hash.ToLower())  $($_.Name)" } | Set-Content dist/SHA256SUMS.txt
+      - run: dart setup.dart windows --env stable --targets exe --arch amd64
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: usernet-windows-x64
-          path: dist/*
+          path: dist/UserNet-windows-amd64-setup.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -76,113 +167,258 @@ jobs:
           cache-dependency-path: core/go.sum
       - run: flutter pub get
       - run: dart setup.dart macos --env stable --arch ${{ matrix.arch }}
-      - name: Create checksums
-        run: shasum -a 256 dist/* > dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: usernet-macos-${{ matrix.arch }}
-          path: dist/*
+          path: dist/UserNet-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
           retention-days: 14
 
-  github-release:
-    name: Publish verified GitHub release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-pre.')
-    needs: [windows, macos]
+  linux:
+    name: Linux x64 DEB
     runs-on: ubuntu-24.04
-    permissions:
-      actions: read
-      contents: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 0
           persist-credentials: false
+      - uses: subosito/flutter-action@e938fdf56512cc96ef2f93601a5a40bde3801046 # v2.19.0
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: core/go.sum
+      - uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          target: x86_64-unknown-linux-gnu
+          cache: false
+      - run: flutter pub get
+      - run: dart setup.dart linux --env stable --targets deb --arch amd64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: usernet-linux-deb
+          path: dist/UserNet-linux-amd64.deb
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Verify release tag is on main
+  android-release:
+    name: Signed Android stable APK
+    if: needs.release-plan.outputs.publish == 'true'
+    needs: [release-plan]
+    runs-on: ubuntu-24.04
+    environment: usernet-production
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: vconnect/relay/go.sum
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'ndk;28.2.13676358 build-tools;36.0.0'
+      - name: Install Android 17 preview platform
+        run: yes | sdkmanager --channel=3 'platforms;android-37.0'
+      - uses: subosito/flutter-action@e938fdf56512cc96ef2f93601a5a40bde3801046 # v2.19.0
+        with:
+          flutter-version: 3.47.6
+          channel: stable
+      - name: Select Android NDK for Flutter hooks
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          ndk="${ANDROID_HOME:?ANDROID_HOME is not set}/ndk/28.2.13676358"
+          clang_root="$ndk/toolchains/llvm/prebuilt/linux-x86_64"
+          test -x "$clang_root/bin/clang"
+          test -n "$(find "$clang_root" -maxdepth 2 -type f -name 'libclang.*' -print -quit)"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+      - run: flutter pub get
+      - name: Install isolated Android signing key
+        env:
+          USERNET_RELEASE_KEYSTORE_BASE64: ${{ secrets.USERNET_RELEASE_KEYSTORE_BASE64 }}
+          USERNET_RELEASE_SIGNING_PASSWORD: ${{ secrets.USERNET_RELEASE_SIGNING_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$USERNET_RELEASE_KEYSTORE_BASE64"
+          test -n "$USERNET_RELEASE_SIGNING_PASSWORD"
+          signing_dir="$RUNNER_TEMP/usernet-signing"
+          install -d -m 700 "$signing_dir"
+          printf '%s' "$USERNET_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/usernet-release.p12"
+          printf '%s' "$USERNET_RELEASE_SIGNING_PASSWORD" > "$signing_dir/signing.password"
+          chmod 600 "$signing_dir/usernet-release.p12" "$signing_dir/signing.password"
+          {
+            echo "USERNET_SIGNING_DIR=$signing_dir"
+            echo "USERNET_APKSIGNER_BIN=$ANDROID_HOME/build-tools/36.0.0/apksigner"
+            echo "USERNET_AAPT_BIN=$ANDROID_HOME/build-tools/36.0.0/aapt"
+          } >> "$GITHUB_ENV"
+      - name: Build and verify signed stable APK
+        run: bash scripts/build-usernet-release.sh stable
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: usernet-android-apk
+          path: build/usernet-releases/usernet-stable-${{ needs.release-plan.outputs.version }}-${{ needs.release-plan.outputs.build }}.apk
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Download desktop build artifacts
+  publish:
+    name: Publish the same build to OTA and GitHub
+    if: needs.release-plan.outputs.publish == 'true'
+    needs: [release-plan, windows, macos, linux, android-release]
+    runs-on: ubuntu-24.04
+    environment: usernet-production
+    permissions:
+      actions: read
+      contents: write
+    env:
+      USERNET_RELEASE_VERSION: ${{ needs.release-plan.outputs.version }}
+      USERNET_RELEASE_BUILD: ${{ needs.release-plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Download platform builds from this workflow run
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name usernet-android-apk --dir "$RUNNER_TEMP/artifacts/android"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name usernet-linux-deb --dir "$RUNNER_TEMP/artifacts/linux"
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name usernet-windows-x64 --dir "$RUNNER_TEMP/artifacts/windows"
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name usernet-macos-arm64 --dir "$RUNNER_TEMP/artifacts/macos-arm64"
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name usernet-macos-amd64 --dir "$RUNNER_TEMP/artifacts/macos-amd64"
-          mkdir -p release-assets
-          find "$RUNNER_TEMP/artifacts" -type f ! -name SHA256SUMS.txt \
-            -exec cp {} release-assets/ \;
-
-      - name: Add current signed Android and Linux packages
+      - name: Prepare and verify immutable OTA bundle
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          mkdir -p release-assets
-
-          android_manifest="$(mktemp)"
-          linux_manifest="$(mktemp)"
-          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            https://updates.userlay.com/android/stable.json -o "$android_manifest"
-          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            https://updates.userlay.com/linux/stable.json -o "$linux_manifest"
-
-          test "$(jq -er '.version' "$android_manifest")" = "$version"
-          test "$(jq -er '.version' "$linux_manifest")" = "$version"
-          android_url="$(jq -er '.apkUrl' "$android_manifest")"
-          linux_url="$(jq -er '.debUrl' "$linux_manifest")"
-          android_sha="$(jq -er '.sha256' "$android_manifest")"
-          linux_sha="$(jq -er '.sha256' "$linux_manifest")"
-          [[ "$android_url" == https://updates.userlay.com/android/* ]]
-          [[ "$linux_url" == https://updates.userlay.com/linux/* ]]
-          [[ "$android_sha" =~ ^[a-f0-9]{64}$ && "$linux_sha" =~ ^[a-f0-9]{64}$ ]]
-
-          android_file="release-assets/UserNet-android.apk"
-          linux_file="release-assets/UserNet-linux.deb"
-          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            "$android_url" -o "$android_file"
-          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            "$linux_url" -o "$linux_file"
-          printf '%s  %s\n' "$android_sha" "$android_file" | sha256sum --check --strict
-          printf '%s  %s\n' "$linux_sha" "$linux_file" | sha256sum --check --strict
-
-      - name: Prepare release notes and checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          awk -v version="$version" '
+          release_notes="$RUNNER_TEMP/release-notes.md"
+          awk -v version="$USERNET_RELEASE_VERSION" '
             $0 ~ "^## " version "([[:space:]]|$)" { found = 1; next }
             found && /^## / { exit }
             found { print }
             END { if (!found) exit 1 }
-          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
-          test -s "$RUNNER_TEMP/release-notes.md"
-          cat >> "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          ' CHANGELOG.md > "$release_notes"
+          test -s "$release_notes"
+          cat >> "$release_notes" <<'EOF'
 
           ### macOS installation
           These macOS packages are not signed with Developer ID or notarized. On first launch, approve UserNet in System Settings → Privacy & Security.
           EOF
-          (cd release-assets && sha256sum * > SHA256SUMS.txt)
 
-      - name: Publish GitHub release
+          python3 scripts/usernet_ota.py prepare \
+            --version "$USERNET_RELEASE_VERSION" \
+            --build "$USERNET_RELEASE_BUILD" \
+            --notes "$release_notes" \
+            --android "$RUNNER_TEMP/artifacts/android/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD.apk" \
+            --linux "$RUNNER_TEMP/artifacts/linux/UserNet-linux-amd64.deb" \
+            --windows "$RUNNER_TEMP/artifacts/windows/UserNet-windows-amd64-setup.exe" \
+            --macos-arm64 "$RUNNER_TEMP/artifacts/macos-arm64/UserNet-macos-arm64.dmg" \
+            --macos-amd64 "$RUNNER_TEMP/artifacts/macos-amd64/UserNet-macos-amd64.dmg" \
+            --output "$RUNNER_TEMP/usernet-release"
+          python3 scripts/usernet_ota.py verify "$RUNNER_TEMP/usernet-release/bundle"
+      - name: Create or refresh hidden GitHub release draft
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" release-assets/* \
+          tag="v$USERNET_RELEASE_VERSION"
+          shopt -s nullglob
+          assets=("$RUNNER_TEMP/usernet-release/release-assets/"*)
+          test "${#assets[@]}" -gt 0
+          if release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,assets 2>/dev/null)"; then
+            if [[ "$(jq -r '.isDraft' <<< "$release_json")" != true ]]; then
+              echo "Refusing to replace published release $tag." >&2
+              exit 1
+            fi
+            while IFS= read -r asset_name; do
+              gh release delete-asset "$tag" "$asset_name" \
+                --repo "$GITHUB_REPOSITORY" --yes
+            done < <(jq -r '.assets[].name' <<< "$release_json")
+            gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --draft \
+              --title "UserNet $USERNET_RELEASE_VERSION" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+      - name: Publish verified bundle to the restricted OTA receiver
+        env:
+          OTA_SSH_PRIVATE_KEY: ${{ secrets.OTA_SSH_PRIVATE_KEY }}
+          OTA_SSH_KNOWN_HOSTS: ${{ secrets.OTA_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$OTA_SSH_PRIVATE_KEY"
+          test -n "$OTA_SSH_KNOWN_HOSTS"
+          key_file="$RUNNER_TEMP/usernet-ota-key"
+          known_hosts_file="$RUNNER_TEMP/usernet-ota-known-hosts"
+          install -m 600 /dev/null "$key_file"
+          install -m 600 /dev/null "$known_hosts_file"
+          printf '%s\n' "$OTA_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$OTA_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          tar_file="$RUNNER_TEMP/usernet-release/ota-bundle.tar.gz"
+          ssh -T \
+            -i "$key_file" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known_hosts_file" \
+            -o ConnectTimeout=15 \
+            "usernet-ota@www.userlay.com" < "$tar_file"
+      - name: Verify public OTA manifests and packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for platform in android linux windows macos; do
+            manifest="$RUNNER_TEMP/usernet-release/bundle/$platform/stable.json"
+            live_manifest="$(curl --fail --silent --show-error --location \
+              --proto '=https' --tlsv1.2 \
+              "https://www.userlay.com/usernet-updates/$platform/stable.json")"
+            cmp -s <(jq -S . "$manifest") <(jq -S . <<< "$live_manifest")
+            case "$platform" in
+              android) asset_fields=(apkUrl:sha256) ;;
+              linux) asset_fields=(debUrl:sha256) ;;
+              windows) asset_fields=(installerUrl:sha256) ;;
+              macos) asset_fields=(dmgArm64Url:sha256Arm64 dmgAmd64Url:sha256Amd64) ;;
+              *) echo "Unexpected platform: $platform" >&2; exit 1 ;;
+            esac
+            for field_pair in "${asset_fields[@]}"; do
+              IFS=: read -r url_field checksum_field <<< "$field_pair"
+              url="$(jq -er --arg field "$url_field" '.[$field] | strings' "$manifest")"
+              checksum="$(jq -er --arg field "$checksum_field" '.[$field] | strings' "$manifest")"
+              download="$(mktemp "$RUNNER_TEMP/usernet-ota-asset.XXXXXX")"
+              curl --fail --silent --show-error --location \
+                --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                "$url" --output "$download"
+              printf '%s  %s\n' "$checksum" "$download" | sha256sum --check --strict
+              rm -f "$download"
+            done
+          done
+      - name: Publish the GitHub release after OTA verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "v$USERNET_RELEASE_VERSION" \
             --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "UserNet ${GITHUB_REF_NAME#v}" \
+            --draft=false \
+            --prerelease=false \
+            --title "UserNet $USERNET_RELEASE_VERSION" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
