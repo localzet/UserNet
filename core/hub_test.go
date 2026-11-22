@@ -645,13 +645,16 @@ func TestProxyTableReadsAreSerialisedAgainstAnApply(t *testing.T) {
 		defer wg.Done()
 		for round := 0; round < rounds; round++ {
 			name := "subscription-" + strconv.Itoa(round)
-			tunnel.UpdateProxies(
-				map[string]constant.Proxy{"DIRECT": namedProxy("DIRECT")},
-				map[string]cp.ProxyProvider{name: newCachingProvider(name, "node")},
-			)
-			tunnel.UpdateRules(nil, nil, map[string]cp.RuleProvider{
-				name: &fakeRuleProvider{name: name, vehicle: cp.HTTP},
+			withTunnelStateWrite(func() {
+				tunnel.UpdateProxies(
+					map[string]constant.Proxy{"DIRECT": namedProxy("DIRECT")},
+					map[string]cp.ProxyProvider{name: newCachingProvider(name, "node")},
+				)
+				tunnel.UpdateRules(nil, nil, map[string]cp.RuleProvider{
+					name: &fakeRuleProvider{name: name, vehicle: cp.HTTP},
+				})
 			})
+			invalidateAllProxies()
 		}
 		close(stop)
 	}()

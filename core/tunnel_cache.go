@@ -24,7 +24,18 @@ var proxyCache struct {
 	versions  map[string]uint32
 }
 
+var tunnelStateMu sync.RWMutex
+
+func withTunnelStateWrite(update func()) {
+	tunnelStateMu.Lock()
+	defer tunnelStateMu.Unlock()
+	update()
+}
+
 func allProxies() map[string]constant.Proxy {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
+
 	base := tunnel.Proxies()
 	providers := tunnel.Providers()
 	proxyCache.Lock()
@@ -97,9 +108,25 @@ func invalidateAllProxies() {
 }
 
 func providersSnapshot() map[string]cp.ProxyProvider {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
 	return tunnel.Providers()
 }
 
 func ruleProvidersSnapshot() map[string]cp.RuleProvider {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
 	return tunnel.RuleProviders()
+}
+
+func proxiesSnapshot() map[string]constant.Proxy {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
+	return tunnel.Proxies()
+}
+
+func providerTablesSnapshot() (map[string]cp.ProxyProvider, map[string]cp.RuleProvider) {
+	tunnelStateMu.RLock()
+	defer tunnelStateMu.RUnlock()
+	return tunnel.Providers(), tunnel.RuleProviders()
 }

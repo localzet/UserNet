@@ -240,11 +240,15 @@ func withTunnelProviders(
 	ruleProviders map[string]cp.RuleProvider,
 ) {
 	t.Helper()
-	tunnel.UpdateProxies(nil, proxyProviders)
-	tunnel.UpdateRules(nil, nil, ruleProviders)
+	withTunnelStateWrite(func() {
+		tunnel.UpdateProxies(nil, proxyProviders)
+		tunnel.UpdateRules(nil, nil, ruleProviders)
+	})
 	t.Cleanup(func() {
-		tunnel.UpdateProxies(nil, nil)
-		tunnel.UpdateRules(nil, nil, nil)
+		withTunnelStateWrite(func() {
+			tunnel.UpdateProxies(nil, nil)
+			tunnel.UpdateRules(nil, nil, nil)
+		})
 	})
 }
 

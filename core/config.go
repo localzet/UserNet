@@ -81,7 +81,7 @@ func handleGetProxyDefinition(name string) (map[string]any, error) {
 	}
 	if proxy := lookupProxy(name); proxy != nil {
 		if pdName := proxy.ProxyInfo().ProviderName; pdName != "" {
-			pd, running := tunnel.Providers()[pdName]
+			pd, running := providersSnapshot()[pdName]
 			mapping, declared := raw.ProxyProvider[pdName]
 			if !running || !declared {
 				return nil, nil
@@ -284,7 +284,9 @@ func applyConfig(params *SetupParams) error {
 	patchSelectGroup(cfg.Proxies, params.SelectedMap)
 	carried := carriedPicksSince(pickRevisionsAtStart)
 	currentConfig = cfg
-	hub.ApplyConfig(mihomoConfig(cfg))
+	withTunnelStateWrite(func() {
+		hub.ApplyConfig(mihomoConfig(cfg))
+	})
 	afterApply(cfg)
 	patchSelectGroup(cfg.Proxies, params.SelectedMap)
 	holdPicks(cfg.Proxies, carried, params.SelectedMap)

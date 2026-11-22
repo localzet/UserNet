@@ -67,15 +67,15 @@ func (t accountingTunnel) HandleUDPPacket(packet constant.UDPPacket, metadata *c
 }
 
 func (t accountingTunnel) Proxies() map[string]constant.Proxy {
-	return tunnel.Proxies()
+	return proxiesSnapshot()
 }
 
 func (t accountingTunnel) Providers() map[string]provider.ProxyProvider {
-	return tunnel.Providers()
+	return providersSnapshot()
 }
 
 func (t accountingTunnel) RuleProviders() map[string]provider.RuleProvider {
-	return tunnel.RuleProviders()
+	return ruleProvidersSnapshot()
 }
 
 func (t accountingTunnel) RuleUpdateCallback() *utils.Callback[provider.RuleProvider] {
