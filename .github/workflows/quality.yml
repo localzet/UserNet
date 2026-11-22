@@ -128,6 +128,20 @@ jobs:
         run: flutter build apk --debug --target-platform android-arm64
       - name: Verify Android debug APK includes the call relay
         run: unzip -Z1 build/app/outputs/flutter-apk/app-debug.apk | grep -Fx 'lib/arm64-v8a/libusernetrelay.so'
+      - name: Build Android release variant without production signing
+        run: >-
+          flutter build apk --release --target-platform android-arm64
+          --dart-define=USERNET_ADMIN_BUILD=false
+          --dart-define=APP_ENV=stable
+      - name: Verify unsigned release smoke APK keeps the dev application ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk='build/app/outputs/flutter-apk/app-release.apk'
+          test -s "$apk"
+          package_name="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" \
+            | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -1)"
+          test "$package_name" = 'com.userlay.usernet.dev'
       - if: >-
           (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
