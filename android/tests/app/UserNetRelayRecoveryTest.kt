@@ -125,13 +125,14 @@ class UserNetRelayRecoveryTest {
     }
 
     @Test
-    fun `stop waits for retry action and stale retry does not invoke it`() {
-        val lock = Any()
+    fun `state callbacks remain available while retry operation is blocked`() {
+        val stateLock = Any()
+        val operationLock = Any()
         val generation = AtomicInteger(1)
         val retryEntered = CountDownLatch(1)
         val finishRetry = CountDownLatch(1)
-        val stopAttempting = CountDownLatch(1)
-        val stopFinished = CountDownLatch(1)
+        val stateUpdateAttempting = CountDownLatch(1)
+        val stateUpdateFinished = CountDownLatch(1)
         val retryFinished = CountDownLatch(1)
         val actionCalls = AtomicInteger()
         var requestActive = true
@@ -151,7 +152,8 @@ class UserNetRelayRecoveryTest {
 
         Thread {
             runRelayRestartIfCurrent(
-                lock = lock,
+                lock = stateLock,
+                operationLock = operationLock,
                 isCurrent = isRetryCurrent,
                 restart = {
                     actionCalls.incrementAndGet()
@@ -163,36 +165,87 @@ class UserNetRelayRecoveryTest {
         }.start()
 
         assertTrue(retryEntered.await(2, TimeUnit.SECONDS))
-        val stopThread = Thread {
-            stopAttempting.countDown()
-            synchronized(lock) { generation.incrementAndGet() }
-            stopFinished.countDown()
+        val stateUpdateThread = Thread {
+            stateUpdateAttempting.countDown()
+            synchronized(stateLock) {
+                generation.incrementAndGet()
+                requestActive = false
+            }
+            stateUpdateFinished.countDown()
         }
-        stopThread.start()
+        stateUpdateThread.start()
 
-        assertTrue(stopAttempting.await(2, TimeUnit.SECONDS))
-        val blockedDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-        while (stopThread.state != Thread.State.BLOCKED && System.nanoTime() < blockedDeadline) {
-            Thread.yield()
-        }
-        assertEquals(Thread.State.BLOCKED, stopThread.state)
+        assertTrue(stateUpdateAttempting.await(2, TimeUnit.SECONDS))
+        assertTrue("state callback must not wait for process teardown", stateUpdateFinished.await(2, TimeUnit.SECONDS))
 
         finishRetry.countDown()
         assertTrue(retryFinished.await(2, TimeUnit.SECONDS))
-        assertTrue(stopFinished.await(2, TimeUnit.SECONDS))
 
         val staleActionCalls = AtomicInteger()
         assertFalse(
             runRelayRestartIfCurrent(
-                lock = lock,
+                lock = stateLock,
+                operationLock = operationLock,
                 isCurrent = isRetryCurrent,
                 restart = { staleActionCalls.incrementAndGet() },
             ),
         )
-        requestActive = false
-        assertFalse(runRelayRestartIfCurrent(lock, isRetryCurrent) { staleActionCalls.incrementAndGet() })
+        assertFalse(
+            runRelayRestartIfCurrent(stateLock, operationLock, isRetryCurrent) {
+                staleActionCalls.incrementAndGet()
+            },
+        )
         assertEquals(1, actionCalls.get())
         assertEquals(0, staleActionCalls.get())
+    }
+
+    @Test
+    fun `relay retry yields to network recovery before stopping the process`() {
+        val stateLock = Any()
+        var networkRestartPending = false
+        val stopCalls = AtomicInteger()
+
+        val firstStop = runUnlessNetworkRestartPending(
+            lock = stateLock,
+            networkRestartPending = { networkRestartPending },
+            action = { stopCalls.incrementAndGet() },
+        )
+        assertEquals(1, firstStop)
+
+        synchronized(stateLock) { networkRestartPending = true }
+        val retryStop = runUnlessNetworkRestartPending(
+            lock = stateLock,
+            networkRestartPending = { networkRestartPending },
+            action = { stopCalls.incrementAndGet() },
+        )
+
+        assertNull(retryStop)
+        assertEquals(1, stopCalls.get())
+    }
+
+    @Test
+    fun `cancelled network worker cannot restart a newer user launch`() {
+        assertTrue(
+            shouldRunScheduledNetworkRestart(
+                recoveryRequestIsCurrent = true,
+                networkUpdateIsCurrent = true,
+                restartIsCurrent = true,
+            ),
+        )
+        assertFalse(
+            shouldRunScheduledNetworkRestart(
+                recoveryRequestIsCurrent = true,
+                networkUpdateIsCurrent = true,
+                restartIsCurrent = false,
+            ),
+        )
+        assertFalse(
+            shouldRunScheduledNetworkRestart(
+                recoveryRequestIsCurrent = false,
+                networkUpdateIsCurrent = true,
+                restartIsCurrent = true,
+            ),
+        )
     }
 
     @Test

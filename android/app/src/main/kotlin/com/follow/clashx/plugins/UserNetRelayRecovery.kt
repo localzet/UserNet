@@ -72,13 +72,30 @@ internal fun shouldRunScheduledRelayRestart(
 
 internal fun runRelayRestartIfCurrent(
     lock: Any,
+    operationLock: Any,
     isCurrent: () -> Boolean,
     restart: () -> Unit,
-): Boolean = synchronized(lock) {
-    if (!isCurrent()) return@synchronized false
+): Boolean = synchronized(operationLock) {
+    val current = synchronized(lock) { isCurrent() }
+    if (!current) return@synchronized false
     restart()
     true
 }
+
+internal fun <T> runUnlessNetworkRestartPending(
+    lock: Any,
+    networkRestartPending: () -> Boolean,
+    action: () -> T,
+): T? = synchronized(lock) {
+    if (networkRestartPending()) return@synchronized null
+    action()
+}
+
+internal fun shouldRunScheduledNetworkRestart(
+    recoveryRequestIsCurrent: Boolean,
+    networkUpdateIsCurrent: Boolean,
+    restartIsCurrent: Boolean,
+): Boolean = recoveryRequestIsCurrent && networkUpdateIsCurrent && restartIsCurrent
 
 internal fun isRelayGenerationCurrent(expectedGeneration: Long, currentGeneration: Long): Boolean =
     expectedGeneration == currentGeneration
