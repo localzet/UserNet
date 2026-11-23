@@ -669,7 +669,12 @@ func (s *service) signFile(ctx context.Context, unsignedPath, signedPath string)
 	if err := verify.Run(); err == nil {
 		return errors.New("input APK is already signed")
 	}
-	passwordArg := "file:" + s.cfg.passwordPath
+	passwordPath, err := createApksignerPasswordFile(filepath.Dir(signedPath), s.cfg.passwordPath)
+	if err != nil {
+		return errors.New("signing password unavailable")
+	}
+	defer os.Remove(passwordPath)
+	passwordArg := "file:" + passwordPath
 	command := exec.CommandContext(ctx, s.cfg.apksignerPath,
 		"sign",
 		"--ks", s.cfg.keystorePath,
@@ -692,6 +697,50 @@ func (s *service) signFile(ctx context.Context, unsignedPath, signedPath string)
 		return errors.New("apksigner failed")
 	}
 	return nil
+}
+
+func createApksignerPasswordFile(tempDir, sourcePath string) (string, error) {
+	password, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return "", err
+	}
+	defer clear(password)
+	if len(password) > 0 && password[len(password)-1] == '\n' {
+		password = password[:len(password)-1]
+		if len(password) > 0 && password[len(password)-1] == '\r' {
+			password = password[:len(password)-1]
+		}
+	}
+	if len(password) == 0 || bytes.ContainsAny(password, "\r\n\x00") {
+		return "", errors.New("invalid signing password file")
+	}
+
+	file, err := os.CreateTemp(tempDir, "apksigner-password-")
+	if err != nil {
+		return "", err
+	}
+	path := file.Name()
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	content := make([]byte, 0, len(password)*2+2)
+	defer clear(content)
+	content = append(content, password...)
+	content = append(content, '\n')
+	content = append(content, password...)
+	content = append(content, '\n')
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
 }
 
 func (s *service) verifySignedAPK(ctx context.Context, apkPath string) error {

@@ -234,6 +234,55 @@ func TestParseVersionBuildRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestCreateApksignerPasswordFileDuplicatesPasswordSecurely(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source-password")
+	if err := os.WriteFile(source, []byte("test-password\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := createApksignerPasswordFile(dir, source)
+	if err != nil {
+		t.Fatalf("create password file: %v", err)
+	}
+	defer os.Remove(path)
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "test-password\ntest-password\n" {
+		t.Fatalf("password file did not contain two lines")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("password file permissions=%#o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestCreateApksignerPasswordFileRejectsInvalidContent(t *testing.T) {
+	for name, content := range map[string][]byte{
+		"empty":      {},
+		"blank-line": []byte("password\n\n"),
+		"multiline":  []byte("first\nsecond"),
+		"nul-byte":   []byte{'p', 0, 'w'},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "source-password")
+			if err := os.WriteFile(source, content, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := createApksignerPasswordFile(dir, source); err == nil {
+				t.Fatal("invalid password file was accepted")
+			}
+		})
+	}
+}
+
 func verifierWithKey(t *testing.T, key *rsa.PrivateKey, now time.Time) (*oidcVerifier, func()) {
 	t.Helper()
 	verifier := newOIDCVerifier(testConfig())
