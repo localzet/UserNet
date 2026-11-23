@@ -21,6 +21,8 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       build: ${{ steps.plan.outputs.build }}
       publish: ${{ steps.plan.outputs.publish }}
+      mode: ${{ steps.plan.outputs.mode }}
+      tag_commit: ${{ steps.plan.outputs.tag_commit }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -41,10 +43,13 @@ jobs:
           build="${BASH_REMATCH[2]}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo 'mode=none' >> "$GITHUB_OUTPUT"
+          echo 'tag_commit=' >> "$GITHUB_OUTPUT"
 
           if [[ "$GITHUB_REF" != refs/heads/main ]]; then
             echo 'Non-main validation run; stable publishing is disabled.'
             echo 'publish=false' >> "$GITHUB_OUTPUT"
+            echo 'mode=validation' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -84,26 +89,72 @@ jobs:
 
           tag="v$version"
           draft=false
+          release_exists=false
+          draft_recovery_ready=false
           if release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
-            --json isDraft 2>/dev/null)"; then
+            --json isDraft,assets 2>/dev/null)"; then
+            release_exists=true
             draft="$(jq -r '.isDraft' <<< "$release_json")"
+            if [[ "$draft" == true ]]; then
+              draft_recovery_ready=true
+              for asset in \
+                "usernet-stable-$version-$build.apk" \
+                "usernet-stable-$version-$build.deb" \
+                "usernet-stable-$version-$build-windows-amd64-setup.exe" \
+                "usernet-stable-$version-$build-macos-arm64.dmg" \
+                "usernet-stable-$version-$build-macos-amd64.dmg" \
+                "SHA256SUMS.txt" \
+                "usernet-release-origin.txt"; do
+                if ! jq -e --arg asset "$asset" \
+                  'any(.assets[]; .name == $asset)' <<< "$release_json" >/dev/null; then
+                  draft_recovery_ready=false
+                  break
+                fi
+              done
+            fi
           fi
+
+          tag_commit="$(python3 scripts/usernet_release.py resolve-tag-commit "$GITHUB_REPOSITORY" "$tag")"
+          echo "tag_commit=$tag_commit" >> "$GITHUB_OUTPUT"
+          python3 scripts/usernet_release.py validate-tag-target \
+            --tag-commit "$tag_commit" \
+            --source-commit "$GITHUB_SHA" \
+            --candidate-build "$build" \
+            --remote-build "$remote_build" \
+            --release-exists "$release_exists"
 
           if (( build == remote_build )); then
             if [[ "$remote_version" != "$version" ]]; then
               echo "Build $build is already published under version $remote_version." >&2
               exit 1
             fi
-            if [[ "$draft" != true ]]; then
+            if [[ "$draft" == true ]]; then
+              echo 'mode=finalize' >> "$GITHUB_OUTPUT"
+              echo 'publish=true' >> "$GITHUB_OUTPUT"
+              echo "OTA build $build is already live; only verify and finalize its GitHub draft."
+              exit 0
+            else
+              if [[ "$release_exists" != true ]]; then
+                echo "OTA build $build is live, but GitHub release $tag is missing; refusing to rebuild immutable artifacts." >&2
+                exit 1
+              fi
               echo 'publish=false' >> "$GITHUB_OUTPUT"
               echo "Build $build is already live; nothing to publish."
               exit 0
             fi
           elif [[ "$draft" == true ]]; then
-            echo "A draft $tag already exists; this run will resume its OTA publication."
+            if [[ "$draft_recovery_ready" == true ]]; then
+              echo 'mode=resume' >> "$GITHUB_OUTPUT"
+              echo "A complete draft $tag already exists; this run will resume using its original release assets."
+            else
+              echo 'mode=normal' >> "$GITHUB_OUTPUT"
+              echo "Draft $tag is incomplete; OTA has not started, so this run will replace it with the verified build."
+            fi
           elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $tag is already published; increment the version before publishing." >&2
             exit 1
+          else
+            echo 'mode=normal' >> "$GITHUB_OUTPUT"
           fi
 
           echo 'publish=true' >> "$GITHUB_OUTPUT"
@@ -111,6 +162,8 @@ jobs:
 
   windows:
     name: Windows x64
+    needs: [release-plan]
+    if: needs.release-plan.outputs.mode != 'resume' && needs.release-plan.outputs.mode != 'finalize'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -144,6 +197,8 @@ jobs:
 
   macos:
     name: macOS ${{ matrix.arch }}
+    needs: [release-plan]
+    if: needs.release-plan.outputs.mode != 'resume' && needs.release-plan.outputs.mode != 'finalize'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -176,6 +231,8 @@ jobs:
 
   linux:
     name: Linux x64 DEB
+    needs: [release-plan]
+    if: needs.release-plan.outputs.mode != 'resume' && needs.release-plan.outputs.mode != 'finalize'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -204,7 +261,7 @@ jobs:
 
   android-release:
     name: Signed Android stable APK
-    if: needs.release-plan.outputs.publish == 'true'
+    if: needs.release-plan.outputs.publish == 'true' && needs.release-plan.outputs.mode == 'normal'
     needs: [release-plan]
     runs-on: ubuntu-24.04
     environment: usernet-production
@@ -295,7 +352,20 @@ jobs:
 
   publish:
     name: Publish the same build to OTA and GitHub
-    if: needs.release-plan.outputs.publish == 'true'
+    if: >-
+      always() &&
+      needs.release-plan.result == 'success' &&
+      needs.release-plan.outputs.publish == 'true' &&
+      (
+        needs.release-plan.outputs.mode == 'resume' ||
+        needs.release-plan.outputs.mode == 'finalize' ||
+        (
+          needs.windows.result == 'success' &&
+          needs.macos.result == 'success' &&
+          needs.linux.result == 'success' &&
+          needs.android-release.result == 'success'
+        )
+      )
     needs: [release-plan, windows, macos, linux, android-release]
     runs-on: ubuntu-24.04
     environment: usernet-production
@@ -306,11 +376,13 @@ jobs:
     env:
       USERNET_RELEASE_VERSION: ${{ needs.release-plan.outputs.version }}
       USERNET_RELEASE_BUILD: ${{ needs.release-plan.outputs.build }}
+      USERNET_RELEASE_SOURCE_COMMIT: ${{ needs.release-plan.outputs.tag_commit }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - name: Download platform builds from this workflow run
+        if: needs.release-plan.outputs.mode == 'normal'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -326,7 +398,44 @@ jobs:
             --name usernet-macos-arm64 --dir "$RUNNER_TEMP/artifacts/macos-arm64"
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name usernet-macos-amd64 --dir "$RUNNER_TEMP/artifacts/macos-amd64"
+      - name: Download existing GitHub release draft assets
+        if: needs.release-plan.outputs.mode == 'resume' || needs.release-plan.outputs.mode == 'finalize'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/usernet-draft-assets"
+          gh release download "v$USERNET_RELEASE_VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/usernet-draft-assets"
+      - name: Verify and stage original release draft artifacts
+        if: needs.release-plan.outputs.mode == 'resume'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/usernet_ota.py verify-release-assets \
+            --assets "$RUNNER_TEMP/usernet-draft-assets" \
+            --version "$USERNET_RELEASE_VERSION" \
+            --build "$USERNET_RELEASE_BUILD" \
+            --source-commit "$GITHUB_SHA"
+          install -D -m 0644 \
+            "$RUNNER_TEMP/usernet-draft-assets/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD.apk" \
+            "$RUNNER_TEMP/artifacts/android/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD.apk"
+          install -D -m 0644 \
+            "$RUNNER_TEMP/usernet-draft-assets/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD.deb" \
+            "$RUNNER_TEMP/artifacts/linux/UserNet-linux-amd64.deb"
+          install -D -m 0644 \
+            "$RUNNER_TEMP/usernet-draft-assets/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD-windows-amd64-setup.exe" \
+            "$RUNNER_TEMP/artifacts/windows/UserNet-windows-amd64-setup.exe"
+          install -D -m 0644 \
+            "$RUNNER_TEMP/usernet-draft-assets/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD-macos-arm64.dmg" \
+            "$RUNNER_TEMP/artifacts/macos-arm64/UserNet-macos-arm64.dmg"
+          install -D -m 0644 \
+            "$RUNNER_TEMP/usernet-draft-assets/usernet-stable-$USERNET_RELEASE_VERSION-$USERNET_RELEASE_BUILD-macos-amd64.dmg" \
+            "$RUNNER_TEMP/artifacts/macos-amd64/UserNet-macos-amd64.dmg"
       - name: Prepare and verify immutable OTA bundle
+        if: needs.release-plan.outputs.mode == 'normal' || needs.release-plan.outputs.mode == 'resume'
         shell: bash
         run: |
           set -euo pipefail
@@ -355,7 +464,22 @@ jobs:
             --macos-amd64 "$RUNNER_TEMP/artifacts/macos-amd64/UserNet-macos-amd64.dmg" \
             --output "$RUNNER_TEMP/usernet-release"
           python3 scripts/usernet_ota.py verify "$RUNNER_TEMP/usernet-release/bundle"
+      - name: Verify resumed release notes are unchanged
+        if: needs.release-plan.outputs.mode == 'resume'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          draft_notes="$(gh release view "v$USERNET_RELEASE_VERSION" \
+            --repo "$GITHUB_REPOSITORY" --json body --jq '.body')"
+          expected_notes="$(cat "$RUNNER_TEMP/release-notes.md")"
+          if [[ "$draft_notes" != "$expected_notes" ]]; then
+            echo 'Release draft notes differ from the original source commit.' >&2
+            exit 1
+          fi
       - name: Create or refresh hidden GitHub release draft
+        if: needs.release-plan.outputs.mode == 'normal'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -383,7 +507,16 @@ jobs:
               --title "UserNet $USERNET_RELEASE_VERSION" \
               --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/usernet-release-origin.txt"
+          gh release upload "$tag" "$RUNNER_TEMP/usernet-release-origin.txt" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          tag_commit="$(python3 scripts/usernet_release.py resolve-tag-commit "$GITHUB_REPOSITORY" "$tag")"
+          if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Release tag $tag does not target the release source commit." >&2
+            exit 1
+          fi
       - name: Publish verified bundle through the isolated OIDC receiver
+        if: needs.release-plan.outputs.mode == 'normal' || needs.release-plan.outputs.mode == 'resume'
         shell: bash
         run: |
           set -euo pipefail
@@ -407,6 +540,7 @@ jobs:
             https://www.userlay.com/usernet-release-signer/v1/publish
           rm -f "$auth_config"
       - name: Verify public OTA manifests and packages
+        if: needs.release-plan.outputs.mode == 'normal' || needs.release-plan.outputs.mode == 'resume'
         shell: bash
         run: |
           set -euo pipefail
@@ -416,6 +550,54 @@ jobs:
               --proto '=https' --tlsv1.2 \
               "https://www.userlay.com/usernet-updates/$platform/stable.json")"
             cmp -s <(jq -S . "$manifest") <(jq -S . <<< "$live_manifest")
+            case "$platform" in
+              android) asset_fields=(apkUrl:sha256) ;;
+              linux) asset_fields=(debUrl:sha256) ;;
+              windows) asset_fields=(installerUrl:sha256) ;;
+              macos) asset_fields=(dmgArm64Url:sha256Arm64 dmgAmd64Url:sha256Amd64) ;;
+              *) echo "Unexpected platform: $platform" >&2; exit 1 ;;
+            esac
+            for field_pair in "${asset_fields[@]}"; do
+              IFS=: read -r url_field checksum_field <<< "$field_pair"
+              url="$(jq -er --arg field "$url_field" '.[$field] | strings' "$manifest")"
+              checksum="$(jq -er --arg field "$checksum_field" '.[$field] | strings' "$manifest")"
+              download="$(mktemp "$RUNNER_TEMP/usernet-ota-asset.XXXXXX")"
+              curl --fail --silent --show-error --location \
+                --proto '=https' --proto-redir '=https' --tlsv1.2 \
+                "$url" --output "$download"
+              printf '%s  %s\n' "$checksum" "$download" | sha256sum --check --strict
+              rm -f "$download"
+            done
+          done
+      - name: Verify the already-published OTA build against its GitHub draft
+        if: needs.release-plan.outputs.mode == 'finalize'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifests="$RUNNER_TEMP/usernet-live-manifests"
+          mkdir -p "$manifests"
+          for platform in android linux windows macos; do
+            mkdir -p "$manifests/$platform"
+            curl --fail --silent --show-error --location \
+              --proto '=https' --tlsv1.2 \
+              "https://www.userlay.com/usernet-updates/$platform/stable.json" \
+              --output "$manifests/$platform/stable.json"
+          done
+          gh release view "v$USERNET_RELEASE_VERSION" \
+            --repo "$GITHUB_REPOSITORY" --json body --jq '.body' \
+            > "$RUNNER_TEMP/release-notes.md"
+          test -s "$RUNNER_TEMP/release-notes.md"
+          python3 scripts/usernet_ota.py verify-release-assets \
+            --assets "$RUNNER_TEMP/usernet-draft-assets" \
+            --manifests "$manifests" \
+            --version "$USERNET_RELEASE_VERSION" \
+            --build "$USERNET_RELEASE_BUILD" \
+            --source-commit "$USERNET_RELEASE_SOURCE_COMMIT" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+          for platform in android linux windows macos; do
+            manifest="$manifests/$platform/stable.json"
             case "$platform" in
               android) asset_fields=(apkUrl:sha256) ;;
               linux) asset_fields=(debUrl:sha256) ;;
@@ -447,3 +629,17 @@ jobs:
             --prerelease=false \
             --title "UserNet $USERNET_RELEASE_VERSION" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
+      - name: Remove temporary release provenance asset
+        if: needs.release-plan.outputs.mode == 'normal' || needs.release-plan.outputs.mode == 'resume' || needs.release-plan.outputs.mode == 'finalize'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$USERNET_RELEASE_VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            | jq -e 'any(.assets[]; .name == "usernet-release-origin.txt")' >/dev/null; then
+            gh release delete-asset "$tag" usernet-release-origin.txt \
+              --repo "$GITHUB_REPOSITORY" --yes
+          fi

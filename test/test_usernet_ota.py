@@ -60,6 +60,103 @@ class UserNetOtaTests(unittest.TestCase):
 
         self.assertIn(expected_mount, compose.read_text(encoding="utf-8"))
 
+    def test_release_draft_assets_are_bound_to_the_source_commit(self):
+        _, _, release_assets = self.prepare()
+        source_commit = "a" * 40
+        (release_assets / "usernet-release-origin.txt").write_text(
+            f"{source_commit}\n",
+            encoding="ascii",
+        )
+
+        verified = ota.verify_release_artifacts(
+            release_assets,
+            version="0.5.13",
+            build=2026112201,
+            source_commit=source_commit,
+        )
+        self.assertEqual(5, len(verified))
+        with self.assertRaisesRegex(ota.OtaError, "different source commit"):
+            ota.verify_release_artifacts(
+                release_assets,
+                version="0.5.13",
+                build=2026112201,
+                source_commit="b" * 40,
+            )
+
+    def test_release_draft_assets_must_match_live_ota_manifests(self):
+        bundle, _, release_assets = self.prepare()
+        source_commit = "c" * 40
+        (release_assets / "usernet-release-origin.txt").write_text(
+            f"{source_commit}\n",
+            encoding="ascii",
+        )
+        live_manifests = self.root / "live-manifests"
+        for platform in ota.PLATFORMS:
+            target = live_manifests / platform / "stable.json"
+            target.parent.mkdir(parents=True)
+            target.write_bytes((bundle / platform / "stable.json").read_bytes())
+
+        notes_path = self.root / "release-notes.md"
+        notes = json.loads((bundle / "android" / "stable.json").read_text())["notes"]
+        notes_path.write_text(notes, encoding="utf-8")
+        ota.verify_release_matches_manifests(
+            release_assets,
+            live_manifests,
+            version="0.5.13",
+            build=2026112201,
+            source_commit=source_commit,
+            notes_file=notes_path,
+        )
+
+        notes_path.write_text("different release notes", encoding="utf-8")
+        with self.assertRaisesRegex(ota.OtaError, "release notes differ"):
+            ota.verify_release_matches_manifests(
+                release_assets,
+                live_manifests,
+                version="0.5.13",
+                build=2026112201,
+                source_commit=source_commit,
+                notes_file=notes_path,
+            )
+
+        manifest_path = live_manifests / "android" / "stable.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["sha256"] = "0" * 64
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ota.OtaError, "Artifact verification failed"):
+            ota.verify_release_matches_manifests(
+                release_assets,
+                live_manifests,
+                version="0.5.13",
+                build=2026112201,
+            )
+
+    def test_release_draft_artifacts_reject_tampered_or_unexpected_files(self):
+        _, _, release_assets = self.prepare()
+        (release_assets / "usernet-release-origin.txt").write_text(
+            f"{'a' * 40}\n",
+            encoding="ascii",
+        )
+        artifact = next(release_assets.glob("*.apk"))
+        artifact.write_bytes(b"tampered release apk")
+
+        with self.assertRaisesRegex(ota.OtaError, "Release asset verification failed"):
+            ota.verify_release_artifacts(
+                release_assets,
+                version="0.5.13",
+                build=2026112201,
+                source_commit="a" * 40,
+            )
+
+        _, _, clean_assets = self.prepare("clean-bundle")
+        (clean_assets / "unexpected.txt").write_text("unexpected", encoding="utf-8")
+        with self.assertRaisesRegex(ota.OtaError, "unexpected asset list"):
+            ota.verify_release_artifacts(
+                clean_assets,
+                version="0.5.13",
+                build=2026112201,
+            )
+
     def test_verification_rejects_tampered_artifact_and_untrusted_url(self):
         bundle, _, _ = self.prepare()
         artifact = next((bundle / "android").glob("*.apk"))

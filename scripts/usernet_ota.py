@@ -220,6 +220,157 @@ def verify_bundle(bundle: Path) -> tuple[str, int, list[tuple[str, str, str]]]:
     return version, build, artifacts
 
 
+def verify_release_artifacts(
+    assets: Path,
+    *,
+    version: str,
+    build: int,
+    source_commit: str | None = None,
+) -> list[Path]:
+    if assets.is_symlink() or not assets.is_dir():
+        raise OtaError("Release assets directory is missing")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise OtaError("Invalid release version")
+    if not 1_000_000_000 <= build <= 9_999_999_999:
+        raise OtaError("Invalid release build")
+
+    names = [
+        _expected_name("android", version, build),
+        _expected_name("linux", version, build),
+        _expected_name("windows", version, build),
+        _expected_name("macos", version, build, "arm64"),
+        _expected_name("macos", version, build, "amd64"),
+    ]
+    expected_names = set(names)
+    checksum_path = assets / "SHA256SUMS.txt"
+    if checksum_path.is_symlink() or not checksum_path.is_file():
+        raise OtaError("Release checksum file is missing")
+
+    try:
+        checksum_lines = checksum_path.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise OtaError("Invalid release checksum file") from error
+
+    checksums: dict[str, str] = {}
+    for line in checksum_lines:
+        checksum, separator, name = line.partition("  ")
+        if (
+            not separator
+            or not re.fullmatch(r"[a-f0-9]{64}", checksum)
+            or Path(name).name != name
+            or name in checksums
+        ):
+            raise OtaError("Invalid release checksum file")
+        checksums[name] = checksum
+    if set(checksums) != expected_names:
+        raise OtaError("Release checksum file has an unexpected asset list")
+
+    origin_path = assets / "usernet-release-origin.txt"
+    if source_commit is not None:
+        if not re.fullmatch(r"[a-f0-9]{40,64}", source_commit):
+            raise OtaError("Invalid expected source commit")
+        if origin_path.is_symlink() or not origin_path.is_file():
+            raise OtaError("Release source marker is missing")
+        try:
+            origin = origin_path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError) as error:
+            raise OtaError("Release source marker is invalid") from error
+        if origin != source_commit:
+            raise OtaError("Release draft belongs to a different source commit")
+    elif origin_path.exists() and (origin_path.is_symlink() or not origin_path.is_file()):
+        raise OtaError("Release source marker is invalid")
+    elif origin_path.is_file():
+        try:
+            origin = origin_path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError) as error:
+            raise OtaError("Release source marker is invalid") from error
+        if not re.fullmatch(r"[a-f0-9]{40,64}", origin):
+            raise OtaError("Release source marker is invalid")
+
+    allowed_names = expected_names | {"SHA256SUMS.txt"}
+    if origin_path.is_file():
+        allowed_names.add(origin_path.name)
+    if {entry.name for entry in assets.iterdir()} != allowed_names:
+        raise OtaError("Release draft has an unexpected asset list")
+
+    verified: list[Path] = []
+    for name in names:
+        artifact = assets / name
+        if artifact.is_symlink() or not artifact.is_file():
+            raise OtaError(f"Release asset is missing: {name}")
+        size = artifact.stat().st_size
+        if size <= 0 or size > MAX_ARTIFACT_BYTES or _sha256(artifact) != checksums[name]:
+            raise OtaError(f"Release asset verification failed: {name}")
+        verified.append(artifact)
+    return verified
+
+
+def verify_release_matches_manifests(
+    assets: Path,
+    manifests: Path,
+    *,
+    version: str,
+    build: int,
+    source_commit: str | None = None,
+    notes_file: Path | None = None,
+) -> None:
+    verify_release_artifacts(
+        assets,
+        version=version,
+        build=build,
+        source_commit=source_commit,
+    )
+    if manifests.is_symlink() or not manifests.is_dir():
+        raise OtaError("Live manifest directory is missing")
+
+    with tempfile.TemporaryDirectory(prefix="usernet-release-check-") as temporary_dir:
+        bundle = Path(temporary_dir) / "bundle"
+        bundle.mkdir()
+        (bundle / "bundle.json").write_text(
+            json.dumps({"version": version, "build": build}),
+            encoding="utf-8",
+        )
+
+        notes: str | None = None
+        for platform in PLATFORMS:
+            source_manifest = manifests / platform / "stable.json"
+            if source_manifest.is_symlink() or not source_manifest.is_file():
+                raise OtaError(f"Live {platform} manifest is missing")
+            try:
+                manifest = json.loads(source_manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise OtaError(f"Live {platform} manifest is invalid") from error
+            if not isinstance(manifest, dict):
+                raise OtaError(f"Live {platform} manifest is invalid")
+            if manifest.get("version") != version or manifest.get("build") != build:
+                raise OtaError(f"Live {platform} manifest has a different release")
+            if notes is None:
+                notes = manifest.get("notes")
+            elif notes != manifest.get("notes"):
+                raise OtaError("Live release notes differ between platform manifests")
+
+            platform_dir = bundle / platform
+            platform_dir.mkdir()
+            shutil.copyfile(source_manifest, platform_dir / "stable.json")
+            for index, (_, _, _) in enumerate(MANIFEST_FIELDS[platform]):
+                arch = ("arm64", "amd64")[index] if platform == "macos" else None
+                name = _expected_name(platform, version, build, arch)
+                shutil.copyfile(assets / name, platform_dir / name)
+
+        actual_version, actual_build, _ = verify_bundle(bundle)
+        if (actual_version, actual_build) != (version, build):
+            raise OtaError("Live OTA release does not match the draft")
+        if notes_file is not None:
+            if notes_file.is_symlink() or not notes_file.is_file():
+                raise OtaError("GitHub release notes are missing")
+            try:
+                release_notes = notes_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                raise OtaError("GitHub release notes are invalid") from error
+            if not isinstance(notes, str) or release_notes.rstrip("\n") != notes.rstrip("\n"):
+                raise OtaError("GitHub release notes differ from live OTA manifests")
+
+
 def _atomic_write(destination: Path, content: bytes) -> None:
     fd, temporary_name = tempfile.mkstemp(prefix=".stable-", dir=destination.parent)
     temporary = Path(temporary_name)
@@ -436,6 +587,28 @@ def _prepare_command(args: argparse.Namespace) -> None:
     print(f"Release assets: {release_assets}")
 
 
+def _verify_release_command(args: argparse.Namespace) -> None:
+    if args.manifests is None:
+        if args.notes_file is not None:
+            raise OtaError("Release notes checks require live manifests")
+        verify_release_artifacts(
+            args.assets,
+            version=args.version,
+            build=args.build,
+            source_commit=args.source_commit,
+        )
+    else:
+        verify_release_matches_manifests(
+            args.assets,
+            args.manifests,
+            version=args.version,
+            build=args.build,
+            source_commit=args.source_commit,
+            notes_file=args.notes_file,
+        )
+    print(f"Verified release assets for {args.version} ({args.build}).")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -453,6 +626,14 @@ def main() -> int:
     verify = commands.add_parser("verify")
     verify.add_argument("bundle", type=Path)
 
+    verify_release = commands.add_parser("verify-release-assets")
+    verify_release.add_argument("--assets", required=True, type=Path)
+    verify_release.add_argument("--manifests", type=Path)
+    verify_release.add_argument("--version", required=True)
+    verify_release.add_argument("--build", required=True, type=int)
+    verify_release.add_argument("--source-commit")
+    verify_release.add_argument("--notes-file", type=Path)
+
     receive = commands.add_parser("receive")
     receive.add_argument(
         "--root",
@@ -467,6 +648,8 @@ def main() -> int:
         elif args.command == "verify":
             version, build, artifacts = verify_bundle(args.bundle)
             print(f"Verified {version} ({build}): {len(artifacts)} artifacts.")
+        elif args.command == "verify-release-assets":
+            _verify_release_command(args)
         else:
             changed = receive_and_apply(args.root)
             print("Published verified UserNet OTA bundle." if changed else "OTA bundle already published.")

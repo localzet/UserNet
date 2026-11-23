@@ -31,3 +31,13 @@ docker compose -f release-signer/compose.yml build
 The public `/healthz` endpoint is only a liveness check. Signing and publishing
 require a valid OIDC token with the exact repository, protected ref, workflow,
 environment, audience, and event claims configured in `signer.env`.
+
+## Release recovery
+
+Rerun a failed release from the same `main` commit. If its GitHub draft is
+complete, the workflow verifies its source commit and checksums, then resumes
+with those original artifacts. If OTA already contains the release build, the
+workflow verifies that the draft assets, public manifests, downloadable files,
+notes, and tag target match before publishing the GitHub release. A tag that
+targets another commit is rejected; create a new version instead of retargeting
+it.
