@@ -121,8 +121,8 @@ void main() {
     final container = _containerFor(
       tester,
       overrides: [
-        proxiesStyleSettingProvider.overrideWithValue(
-          const ProxiesStyleProps(type: ProxiesType.list),
+        proxiesStyleSettingProvider.overrideWithBuild(
+          (_, _) => const ProxiesStyleProps(type: ProxiesType.list),
         ),
       ],
     );
@@ -152,8 +152,8 @@ void main() {
     final container = _containerFor(
       tester,
       overrides: [
-        proxiesStyleSettingProvider.overrideWithValue(
-          const ProxiesStyleProps(sortType: ProxiesSortType.none),
+        proxiesStyleSettingProvider.overrideWithBuild(
+          (_, _) => const ProxiesStyleProps(sortType: ProxiesSortType.none),
         ),
       ],
     );
