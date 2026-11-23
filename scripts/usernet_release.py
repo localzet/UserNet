@@ -90,6 +90,7 @@ def validate_tag_target(
     remote_build: int,
     release_exists: bool,
 ) -> None:
+    tag_commit = tag_commit or None
     if not COMMIT_SHA.fullmatch(source_commit):
         raise ReleaseTagError("Invalid source commit")
     if release_exists and tag_commit is None:

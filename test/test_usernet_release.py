@@ -73,6 +73,7 @@ class UserNetReleaseTagTests(unittest.TestCase):
         old_commit = "b" * 40
 
         release.validate_tag_target(None, source_commit, 2026112201, 2026110805, False)
+        release.validate_tag_target("", source_commit, 2026112201, 2026110805, False)
         release.validate_tag_target(source_commit, source_commit, 2026112201, 2026110805, True)
         release.validate_tag_target(old_commit, source_commit, 2026110805, 2026110805, True)
 
