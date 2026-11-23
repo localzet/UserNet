@@ -8,6 +8,7 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/tools.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,7 +16,64 @@ import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 
+const _urlLauncherChannel = MethodChannel('plugins.flutter.io/url_launcher');
+
 void main() {
+  testWidgets('offers the GitHub bug report form in the Other section', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final container = ProviderContainer(
+      overrides: [
+        profilesProvider.overrideWith(TestProfiles.new),
+        navigationItemsStateProvider.overrideWithValue(
+          NavigationItemsState(value: []),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    globalState.container = container;
+    String? launchedUrl;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(_urlLauncherChannel, (call) async {
+      expect(call.method, 'launch');
+      final arguments = call.arguments as Map<Object?, Object?>;
+      launchedUrl = arguments['url'] as String;
+      return true;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(_urlLauncherChannel, null),
+    );
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const TestApp(locale: Locale('en'), child: ToolsView()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Report a bug'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('Report a bug'), findsOneWidget);
+    expect(find.byGlyph(AppGlyphs.support), findsOneWidget);
+    await tester.tap(find.text('Report a bug'));
+    await tester.pumpAndSettle();
+    expect(
+      launchedUrl,
+      'https://github.com/localzet/UserNet/issues/new?template=bug_report.yml',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the Zashboard row follows the Resources entry once a '
       'controller address is set', (tester) async {
     tester.view.physicalSize = const Size(1400, 1000);

@@ -34,6 +34,7 @@ val hasReleaseSigning = releaseStoreFile.exists() &&
     releaseKeyAlias != null &&
     releaseKeyPassword != null &&
     releaseStoreType != null
+val deferStableSigning = System.getenv("USERNET_SIGNING_DEFERRED") == "true"
 
 android {
     namespace = "com.follow.clashx"
@@ -81,7 +82,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            if (hasReleaseSigning) {
+            if (deferStableSigning) {
+                signingConfig = null
+            } else if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             } else {
                 signingConfig = signingConfigs.getByName("debug")

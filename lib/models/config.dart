@@ -467,8 +467,8 @@ ProxyCardType proxyCardTypeSafeFromJson(Object? cardType) {
 @freezed
 abstract class ProxiesStyleProps with _$ProxiesStyleProps {
   const factory ProxiesStyleProps({
-    @Default(ProxiesType.list) ProxiesType type,
-    @Default(ProxiesSortType.none) ProxiesSortType sortType,
+    @Default(ProxiesType.tab) ProxiesType type,
+    @Default(ProxiesSortType.delay) ProxiesSortType sortType,
     @Default(ProxiesLayout.standard) ProxiesLayout layout,
     @Default(ProxiesIconStyle.filled)
     @JsonKey(fromJson: proxiesIconStyleSafeFromJson)
@@ -479,9 +479,22 @@ abstract class ProxiesStyleProps with _$ProxiesStyleProps {
     @Default(false) bool hideTimeoutProxies,
   }) = _ProxiesStyleProps;
 
-  factory ProxiesStyleProps.fromJson(Map<String, Object?>? json) => json == null
-      ? defaultProxiesStyleProps
-      : _$ProxiesStylePropsFromJson(json);
+  factory ProxiesStyleProps.fromJson(Map<String, Object?>? json) {
+    if (json == null) {
+      return defaultProxiesStyleProps;
+    }
+
+    final props = _$ProxiesStylePropsFromJson(json);
+    const previousDefaults = ProxiesStyleProps(
+      type: ProxiesType.list,
+      sortType: ProxiesSortType.none,
+    );
+    if (props == previousDefaults) {
+      return defaultProxiesStyleProps;
+    }
+
+    return props;
+  }
 }
 
 @freezed

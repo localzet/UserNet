@@ -58,6 +58,9 @@ void main() {
     container = ProviderContainer(
       overrides: [
         viewModeProvider.overrideWithValue(viewMode),
+        proxiesStyleSettingProvider.overrideWithValue(
+          const ProxiesStyleProps(type: ProxiesType.list),
+        ),
         currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
         profilesProvider.overrideWith(() => TestProfiles([profile])),
         currentGroupsStateProvider.overrideWithValue(

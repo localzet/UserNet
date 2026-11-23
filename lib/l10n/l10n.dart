@@ -865,6 +865,16 @@ class AppLocalizations {
     return Intl.message('Support', name: 'support', desc: '', args: []);
   }
 
+  /// `Report a bug`
+  String get reportIssue {
+    return Intl.message(
+      'Report a bug',
+      name: 'reportIssue',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Theme color`
   String get themeColor {
     return Intl.message('Theme color', name: 'themeColor', desc: '', args: []);

@@ -1,0 +1,6 @@
+**
+!release-signer/
+!scripts/
+!release-signer/go.mod
+!release-signer/main.go
+!scripts/usernet_ota.py
