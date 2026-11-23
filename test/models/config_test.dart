@@ -551,11 +551,37 @@ void main() {
   });
 
   group('ProxiesStyleProps JSON round-trip', () {
-    test('default values', () {
+    test('uses the recommended default values', () {
       const props = ProxiesStyleProps();
-      expect(props.type, ProxiesType.list);
-      expect(props.sortType, ProxiesSortType.none);
+      expect(props.type, ProxiesType.tab);
+      expect(props.sortType, ProxiesSortType.delay);
       expect(props.layout, ProxiesLayout.standard);
+      expect(props.cardType, ProxyCardType.standard);
+      expect(props.iconStyle, ProxiesIconStyle.filled);
+      expect(props.hideTimeoutProxies, false);
+    });
+
+    test('migrates the previously saved defaults', () {
+      final props = ProxiesStyleProps.fromJson({
+        'type': 'list',
+        'sortType': 'none',
+        'layout': 'standard',
+        'iconStyle': 'filled',
+        'cardType': 'standard',
+        'hideTimeoutProxies': false,
+      });
+
+      expect(props, defaultProxiesStyleProps);
+    });
+
+    test('preserves customized proxy preferences during migration', () {
+      final props = ProxiesStyleProps.fromJson({
+        'type': 'list',
+        'sortType': 'delay',
+      });
+
+      expect(props.type, ProxiesType.list);
+      expect(props.sortType, ProxiesSortType.delay);
     });
 
     test('round-trip with custom values', () {

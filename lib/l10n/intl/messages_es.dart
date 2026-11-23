@@ -1966,6 +1966,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Introduce tu contraseña para sudo",
     ),
     "support": MessageLookupByLibrary.simpleMessage("Soporte"),
+    "reportIssue": MessageLookupByLibrary.simpleMessage("Informar de un error"),
     "suspended": MessageLookupByLibrary.simpleMessage("Suspendido…"),
     "switchProfile": MessageLookupByLibrary.simpleMessage("Cambiar de perfil"),
     "sync": MessageLookupByLibrary.simpleMessage("Sincronizar"),

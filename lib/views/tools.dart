@@ -44,6 +44,7 @@ class _ToolViewState extends ConsumerState<ToolsView> {
       title: context.appLocalizations.other,
       items: [
         const _DisclaimerItem(),
+        const _ReportIssueItem(),
         if (enableDeveloperMode) const _DeveloperItem(),
         const _InfoItem(),
       ],
@@ -116,6 +117,27 @@ class _ToolViewState extends ConsumerState<ToolsView> {
             top: context.sectionsTopPadding,
             bottom: 20 + context.bottomInset,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReportIssueItem extends StatelessWidget {
+  const _ReportIssueItem();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListItem(
+      leading: const GlyphIcon(AppGlyphs.support),
+      title: Text(context.appLocalizations.reportIssue),
+      trailing: const GlyphIcon(AppGlyphs.link),
+      onTap: () => unawaited(
+        launchUrl(
+          Uri.https('github.com', '/localzet/UserNet/issues/new', {
+            'template': 'bug_report.yml',
+          }),
+          mode: LaunchMode.externalApplication,
         ),
       ),
     );

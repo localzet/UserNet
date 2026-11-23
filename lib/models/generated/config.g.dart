@@ -308,10 +308,10 @@ _ProxiesStyleProps _$ProxiesStylePropsFromJson(Map<String, dynamic> json) =>
     _ProxiesStyleProps(
       type:
           $enumDecodeNullable(_$ProxiesTypeEnumMap, json['type']) ??
-          ProxiesType.list,
+          ProxiesType.tab,
       sortType:
           $enumDecodeNullable(_$ProxiesSortTypeEnumMap, json['sortType']) ??
-          ProxiesSortType.none,
+          ProxiesSortType.delay,
       layout:
           $enumDecodeNullable(_$ProxiesLayoutEnumMap, json['layout']) ??
           ProxiesLayout.standard,

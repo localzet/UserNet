@@ -16,6 +16,46 @@ import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 
 void main() {
+  testWidgets('offers the GitHub bug report form in the Other section', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final container = ProviderContainer(
+      overrides: [
+        profilesProvider.overrideWith(TestProfiles.new),
+        navigationItemsStateProvider.overrideWithValue(
+          NavigationItemsState(value: []),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    globalState.container = container;
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const TestApp(
+          locale: Locale('en'),
+          child: ToolsView(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Report a bug'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('Report a bug'), findsOneWidget);
+    expect(find.byGlyph(AppGlyphs.support), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the Zashboard row follows the Resources entry once a '
       'controller address is set', (tester) async {
     tester.view.physicalSize = const Size(1400, 1000);

@@ -1522,6 +1522,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "sudo 비밀번호를 입력하세요",
     ),
     "support": MessageLookupByLibrary.simpleMessage("지원"),
+    "reportIssue": MessageLookupByLibrary.simpleMessage("문제 신고"),
     "suspended": MessageLookupByLibrary.simpleMessage("일시 중지됨…"),
     "switchProfile": MessageLookupByLibrary.simpleMessage("프로필 전환"),
     "sync": MessageLookupByLibrary.simpleMessage("동기화"),
