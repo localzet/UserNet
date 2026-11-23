@@ -118,7 +118,14 @@ void main() {
   });
 
   testWidgets('proxies setting picks its style from a menu', (tester) async {
-    final container = _containerFor(tester);
+    final container = _containerFor(
+      tester,
+      overrides: [
+        proxiesStyleSettingProvider.overrideWithValue(
+          const ProxiesStyleProps(type: ProxiesType.list),
+        ),
+      ],
+    );
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
@@ -142,7 +149,14 @@ void main() {
   });
 
   testWidgets('proxies setting sorts by delay when selected', (tester) async {
-    final container = _containerFor(tester);
+    final container = _containerFor(
+      tester,
+      overrides: [
+        proxiesStyleSettingProvider.overrideWithValue(
+          const ProxiesStyleProps(sortType: ProxiesSortType.none),
+        ),
+      ],
+    );
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
