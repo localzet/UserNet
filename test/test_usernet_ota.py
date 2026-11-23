@@ -54,6 +54,12 @@ class UserNetOtaTests(unittest.TestCase):
                 json.loads((destination / platform / "stable.json").read_text()),
             )
 
+    def test_signer_compose_mounts_the_ota_state_root(self):
+        compose = SCRIPT.parents[1] / "release-signer" / "compose.yml"
+        expected_mount = f"/var/lib/usernet-release-signer/ota-state:{ota._state_root(Path('/ota/releases'))}:rw"
+
+        self.assertIn(expected_mount, compose.read_text(encoding="utf-8"))
+
     def test_verification_rejects_tampered_artifact_and_untrusted_url(self):
         bundle, _, _ = self.prepare()
         artifact = next((bundle / "android").glob("*.apk"))

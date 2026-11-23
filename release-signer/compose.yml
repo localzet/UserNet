@@ -33,7 +33,7 @@ services:
       - /opt/usernet-updates-origin/releases/linux:/ota/releases/linux:rw
       - /opt/usernet-updates-origin/releases/windows:/ota/releases/windows:rw
       - /opt/usernet-updates-origin/releases/macos:/ota/releases/macos:rw
-      - /var/lib/usernet-release-signer/ota-state:/ota/releases/.usernet-ota:rw
+      - /var/lib/usernet-release-signer/ota-state:/ota/.usernet-ota-state:rw
     labels:
       - traefik.enable=true
       - traefik.docker.network=external
