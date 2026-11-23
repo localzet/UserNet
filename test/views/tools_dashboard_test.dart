@@ -38,10 +38,7 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const TestApp(
-          locale: Locale('en'),
-          child: ToolsView(),
-        ),
+        child: const TestApp(locale: Locale('en'), child: ToolsView()),
       ),
     );
     await tester.pumpAndSettle();
